@@ -15,7 +15,7 @@ async function createTempProject(prefix: string): Promise<string> {
 describe("Ged runtime flow", () => {
   test("bundles Codex conversion adapter with an exact lock", () => {
     expect(packageJson.dependencies).toMatchObject({
-      "@howaboua/pi-codex-conversion": "2.1.6",
+      "@howaboua/pi-codex-conversion": "2.2.27",
     });
     expect(packageJson.pi.extensions).toEqual(
       expect.arrayContaining([
@@ -25,28 +25,28 @@ describe("Ged runtime flow", () => {
 
     const rootPackage = packageLock.packages[""];
     expect(rootPackage?.dependencies).toMatchObject({
-      "@howaboua/pi-codex-conversion": "2.1.6",
+      "@howaboua/pi-codex-conversion": "2.2.27",
     });
 
     const codexPackage =
       packageLock.packages["node_modules/@howaboua/pi-codex-conversion"];
     expect(codexPackage).toMatchObject({
-      version: "2.1.6",
+      version: "2.2.27",
       resolved: expect.stringContaining(
-        "@howaboua/pi-codex-conversion/-/pi-codex-conversion-2.1.6.tgz",
+        "@howaboua/pi-codex-conversion/-/pi-codex-conversion-2.2.27.tgz",
       ),
       integrity:
-        "sha512-rHmHsdJ2CHfkNPSgnKcQgPzpNAsrV4opoCOvkf7yHgHr0y5U3rQeWpoo8cMWboenaeWQxzdb6M1Wpgp1Ur0a0w==",
+        "sha512-yCti0DD4lT0PCsAjk1o0IZz8z+HNQ98Use8AFnGVB/M1WO4K4hIEBMpDg4v8uM3lSZUBQWMGWnMzlVvkxA5SrA==",
     });
   });
 
   test("bundles current pi-subagents and pi-intercom", () => {
     expect(packageJson.dependencies).toMatchObject({
-      "pi-subagents": "0.34.0",
+      "pi-subagents": "0.37.2",
       "pi-intercom": "0.6.0",
       "@mariozechner/pi-coding-agent":
-        "npm:@earendil-works/pi-coding-agent@0.81.1",
-      "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.81.1",
+        "npm:@earendil-works/pi-coding-agent@0.82.1",
+      "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.82.1",
     });
     expect(packageJson.dependencies).not.toHaveProperty(
       "@tintinweb/pi-subagents",
@@ -68,7 +68,7 @@ describe("Ged runtime flow", () => {
     );
 
     expect(packageLock.packages["node_modules/pi-subagents"]).toMatchObject({
-      version: "0.34.0",
+      version: "0.37.2",
     });
     expect(packageLock.packages["node_modules/pi-intercom"]).toMatchObject({
       version: "0.6.0",

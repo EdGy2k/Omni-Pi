@@ -86,19 +86,19 @@
     ]
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.81.1",
-    "@earendil-works/pi-coding-agent": "0.81.1",
-    "@earendil-works/pi-tui": "0.81.1",
-    "@howaboua/pi-codex-conversion": "2.1.6",
-    "@mariozechner/pi-coding-agent": "npm:@earendil-works/pi-coding-agent@0.81.1",
-    "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.81.1",
-    "@plannotator/pi-extension": "0.23.0",
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-tui": "0.82.1",
+    "@howaboua/pi-codex-conversion": "2.2.27",
+    "@mariozechner/pi-coding-agent": "npm:@earendil-works/pi-coding-agent@0.82.1",
+    "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.82.1",
+    "@plannotator/pi-extension": "0.25.0",
     "glimpseui": "0.8.1",
     "jiti": "^2.7.0",
     "pi-intercom": "0.6.0",
     "pi-prompt-template-model": "^0.10.0",
-    "pi-subagents": "0.34.0",
-    "pi-web-access": "^0.13.0"
+    "pi-subagents": "0.37.2",
+    "pi-web-access": "0.15.0"
   },
   "overrides": {
     "@mozilla/readability": "0.6.0",

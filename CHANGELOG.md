@@ -4,6 +4,7 @@
 
 ### Dependencies
 
+- Updated the Pi runtime stack and compatibility aliases to 0.82.1, plus compatible bundled companions (`@howaboua/pi-codex-conversion` 2.2.27, `@plannotator/pi-extension` 0.25.0, `pi-subagents` 0.37.2, and `pi-web-access` 0.15.0). Pi 0.82 adds constrained tool sampling, session-aware bash integrations, and updated model/provider support without requiring GedPi API changes.
 - Bumped GedPi's direct Pi runtime dependencies and compatibility aliases from 0.80.6 to 0.81.1 after reviewing pi.dev release notes for the 0.80.8 model-runtime compatibility changes.
 - Bumped GedPi's Pi runtime stack to 0.80.6, updated compatibility aliases, and refreshed bundled workflow extensions (`@plannotator/pi-extension` 0.23.0, `pi-subagents` 0.34.0, `pi-web-access` 0.13.0, `pi-prompt-template-model` 0.10.0, and `@howaboua/pi-codex-conversion` 2.1.6) after checking release/package metadata for compatibility-sensitive changes.
 - Updated GedPi developer tooling (`@biomejs/biome` 2.5.3, `@types/node` 25.9.5, `vitest` 4.1.10) and refreshed transitive locks, including a patch-level `vite` override bump to 7.3.6 to clear high-severity audit findings.

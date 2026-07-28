@@ -42,14 +42,14 @@ describe("package Pi configuration", () => {
     };
 
     expect(packageJson.engines?.node).toBe(">=22.19.0");
-    expect(packageJson.dependencies?.["@earendil-works/pi-ai"]).toBe("0.81.1");
+    expect(packageJson.dependencies?.["@earendil-works/pi-ai"]).toBe("0.82.1");
     expect(packageJson.dependencies?.["@earendil-works/pi-coding-agent"]).toBe(
-      "0.81.1",
+      "0.82.1",
     );
-    expect(packageJson.dependencies?.["@earendil-works/pi-tui"]).toBe("0.81.1");
+    expect(packageJson.dependencies?.["@earendil-works/pi-tui"]).toBe("0.82.1");
     expect(packageJson.overrides).not.toHaveProperty("@earendil-works/pi-tui");
     expect(packageJson.dependencies?.["@plannotator/pi-extension"]).toBe(
-      "0.23.0",
+      "0.25.0",
     );
     expect(packageJson.dependencies?.glimpseui).toBe("0.8.1");
   });
