@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.19.2 - 2026-07-28
+
 ### Dependencies
 
 - Updated the Pi runtime stack and compatibility aliases to 0.82.1, plus compatible bundled companions (`@howaboua/pi-codex-conversion` 2.2.27, `@plannotator/pi-extension` 0.25.0, `pi-subagents` 0.37.2, and `pi-web-access` 0.15.0). Pi 0.82 adds constrained tool sampling, session-aware bash integrations, and updated model/provider support without requiring GedPi API changes.
