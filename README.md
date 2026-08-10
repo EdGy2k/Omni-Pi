@@ -233,6 +233,7 @@ runtime state.
 
 ```
 .ged/runtime/<work-id>/
+├── governance.json     authoritative governance state and revision
 ├── STATE.md            current phase, active task, blockers, next step
 ├── SESSION-SUMMARY.md  cross-session handoff notes
 └── checkpoints.json    workflow checkpoint state (schema v3)

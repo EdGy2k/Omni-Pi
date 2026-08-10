@@ -9,6 +9,9 @@
   open/continue transition. Every new Pi agent request now receives a fresh
   binding, so stale prior-request selection cannot authorize write, edit, or
   commit tools.
+- Added a strict authoritative governance-state store with monotonic revisions,
+  stale compare-and-swap rejection, serialized evidence appends, and
+  regenerable non-authoritative Markdown projections.
 
 ### Dependencies
 

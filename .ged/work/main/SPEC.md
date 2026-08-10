@@ -1,36 +1,33 @@
-# Spec: Task-scoped governance kernel — slice 2
+# Spec: Task-scoped governance kernel — slice 3
 
 ## Goal
 
-Replace branch-derived work selection with immutable generated work IDs,
-session-scoped ignored active pointers, and explicit per-request `open` or
-`continue` transitions before mutation.
+Add one authoritative, versioned structured governance record per generated
+work item with process-local serialization, monotonic revisions, stale-write
+rejection, lossless concurrent evidence appends, and deterministic Markdown
+projection regeneration.
 
 ## Scope
 
-- Generate readable, time-sortable work IDs with cryptographic entropy.
-- Resolve active paths from `.ged/runtime/active-work/<session-key>.json`.
-- Add atomic `open`, `continue`, bootstrap-selection, and binding-validation
-  operations without importing legacy branch/root state.
-- Register a `ged_work` tool that binds the current Pi session plus a fresh
-  Ged request nonce to one work item.
-- Block write/edit and commit calls when the current request has not explicitly
-  selected work, regardless of subagent settings.
-- Keep branch name and HEAD as display/metadata only.
+- Define the canonical work-state, approval, and role-neutral evidence types.
+- Store authoritative state at `.ged/runtime/<work-id>/governance.json`.
+- Add strict parsing, initialization, compare-and-swap update, and serialized
+  evidence append operations.
+- Write structured state before projections and allow deterministic projection
+  regeneration after interruption.
+- Keep existing checkpoint guards and legacy migration unchanged in this slice.
 
 ## Non-goals
 
-- Do not migrate legacy v2/v3 state, add the authoritative governance record,
-  implement lifecycle transitions, or close shell mutation bypasses here.
-- Do not silently select branch/root artifacts when no pointer exists.
-- Do not add cross-process stale-lock recovery or compatibility shims.
+- Do not import legacy checkpoint records, authorize mutation from the new
+  state, or remove checkpoint compatibility yet.
+- Do not add cross-process lock stealing or content/Git snapshot digests.
+- Do not make Markdown authoritative.
 
 ## Acceptance
 
-- Two tasks on one branch have distinct paths.
-- Branch rename, detached HEAD, and non-Git operation do not change/collide IDs.
-- Independent Pi sessions use independent pointers.
-- Every new agent request receives a fresh binding; stale prior-request
-  selection cannot authorize write/edit/commit.
-- `continue` validates an existing generated work item before selection.
-- Missing, corrupt, unknown-version, or traversal pointers fail closed.
+- Revisions start at zero and increase exactly once per accepted mutation.
+- Stale expected revisions are rejected without changing state.
+- Concurrent evidence appends retain every unique record.
+- Corrupt or unknown schemas fail closed.
+- Projection loss does not affect structured state and can be regenerated.

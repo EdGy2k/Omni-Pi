@@ -87,6 +87,57 @@ export interface GovernanceDecision {
   requiresDecision: boolean;
 }
 
+export type GovernanceEvidenceKind =
+  | "inspection"
+  | "plan"
+  | "implementation"
+  | "verification"
+  | "approval"
+  | "migration-required";
+
+export type GovernanceEvidenceSource = "human" | "runtime" | "agent";
+
+export interface GovernanceEvidence {
+  id: string;
+  kind: GovernanceEvidenceKind;
+  source: GovernanceEvidenceSource;
+  producerId?: string;
+  recordedAt: string;
+  summary: string;
+  outcome: "observed" | "satisfied" | "failed";
+}
+
+export interface GovernanceApproval {
+  id: string;
+  kind: "plan" | "mutation" | "completion";
+  status: "pending" | "approved" | "rejected";
+  recordedAt: string;
+  summary: string;
+}
+
+export interface GovernanceRepositoryIdentity {
+  repositoryId: string;
+  worktreeId: string;
+  branch: string | null;
+  baseHead: string | null;
+}
+
+export interface GovernanceWorkState {
+  schemaVersion: 1;
+  revision: number;
+  workId: string;
+  summary: string;
+  repository: GovernanceRepositoryIdentity;
+  createdAt: string;
+  updatedAt: string;
+  currentSlice: string | null;
+  decision: GovernanceDecision;
+  executionProfile: ExecutionProfile;
+  approvals: GovernanceApproval[];
+  evidence: GovernanceEvidence[];
+  lifecycle: WorkLifecycle;
+}
+
 function isReadOnlyInput(
   input: GovernanceInput,
 ): input is ReadOnlyGovernanceInput {

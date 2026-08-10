@@ -9,7 +9,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — slice 2 complete; slice 3 next
+- **Status**: IN PROGRESS — slice 3 complete; legacy migration next
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: HIGH

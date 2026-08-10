@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { writeFileAtomic } from "./atomic.js";
 import { GED_DIR } from "./contracts.js";
+import { withProcessQueue } from "./serial-queue.js";
 import {
   DEFAULT_WORK_NOTES,
   DEFAULT_WORK_SPEC,
@@ -19,7 +20,6 @@ const SAFE_WORK_PATH_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const ENTROPY = /^[a-f0-9]{32}$/u;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: work summaries are persisted metadata.
 const WORK_SUMMARY_CONTROL = /[\u0000-\u001f\u007f]/gu;
-const selectionQueues = new Map<string, Promise<void>>();
 const activeSessionByRoot = new Map<string, string>();
 
 export interface ActiveGedPaths {
@@ -34,6 +34,7 @@ export interface ActiveGedPaths {
   statePath: string;
   sessionSummaryPath: string;
   checkpointsPath: string;
+  governancePath: string;
 }
 
 export interface WorkRequestIdentity {
@@ -326,6 +327,7 @@ export function gedPathsForWorkId(
     statePath: path.join(runtimeDir, "STATE.md"),
     sessionSummaryPath: path.join(runtimeDir, "SESSION-SUMMARY.md"),
     checkpointsPath: path.join(runtimeDir, "checkpoints.json"),
+    governancePath: path.join(runtimeDir, "governance.json"),
   };
 }
 
@@ -381,26 +383,6 @@ export async function readWorkItemMeta(
       );
     }
     throw error;
-  }
-}
-
-async function withSelectionQueue<T>(
-  key: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = selectionQueues.get(key) ?? Promise.resolve();
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.catch(() => {}).then(() => gate);
-  selectionQueues.set(key, tail);
-  await previous.catch(() => {});
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (selectionQueues.get(key) === tail) selectionQueues.delete(key);
   }
 }
 
@@ -492,7 +474,7 @@ export async function ensureActiveGedWork(
   const selectedSession = selectedSessionId(rootDir, sessionId);
   requireIdentityPart(selectedSession, "sessionId");
   const pointerPath = activeWorkPointerPath(rootDir, selectedSession);
-  return withSelectionQueue(pointerPath, async () => {
+  return withProcessQueue(pointerPath, async () => {
     const existing = await readActiveWorkPointer(rootDir, selectedSession);
     if (existing) {
       await readWorkItemMeta(rootDir, existing.workId);
@@ -519,7 +501,7 @@ export async function openGedWork(
 ): Promise<OpenedGedWork> {
   validateRequestIdentity(identity);
   const pointerPath = activeWorkPointerPath(rootDir, identity.sessionId);
-  return withSelectionQueue(pointerPath, async () => {
+  return withProcessQueue(pointerPath, async () => {
     const { meta, paths } = await createWorkItem(rootDir, summary);
     const pointer: ActiveWorkPointer = {
       schemaVersion: 1,
@@ -542,7 +524,7 @@ export async function continueGedWork(
   validateRequestIdentity(identity);
   requireGeneratedWorkId(workId);
   const pointerPath = activeWorkPointerPath(rootDir, identity.sessionId);
-  return withSelectionQueue(pointerPath, async () => {
+  return withProcessQueue(pointerPath, async () => {
     const meta = await readWorkItemMeta(rootDir, workId);
     const paths = gedPathsForWorkId(rootDir, workId);
     const pointer: ActiveWorkPointer = {

@@ -1,22 +1,20 @@
 # Tasks: Task-scoped governance kernel
 
-## Slice 1 — Pure governance resolver
+## Completed slices
 
-- [x] Add the canonical governance vocabulary and pure resolver contract.
-- [x] Add and verify the required scenario matrix.
+- [x] Slice 1 — Pure governance resolver.
+- [x] Slice 2 — Task identity and per-request selection.
 
-## Slice 2 — Task identity and per-request selection
+## Slice 3 — Authoritative governance state
 
-- [x] Add generated work IDs, session-scoped pointers, and active path lookup.
-- [x] Add atomic bootstrap/open/continue and binding validation operations.
-- [x] Register the current-request transition tool and fail-closed write guard.
-- [x] Add focused path, concurrency, and extension lifecycle tests.
-- [x] Run focused tests, typecheck, formatting, lint, and independent review.
-- [x] Commit the bounded slice.
+- [x] Add canonical work-state, approval, and evidence contracts.
+- [x] Add strict structured-state parsing and initialization.
+- [x] Add serialized CAS updates and lossless evidence appends.
+- [x] Add deterministic projection and regeneration.
+- [x] Run focused/full checks, independent review, and commit.
 
 ## Later slices
 
-- [ ] Add one authoritative structured state with serialized CAS updates.
 - [ ] Add fail-closed legacy-state migration and quarantine.
 - [ ] Decouple remaining guards from staffing and migrate prompts/status.
 - [ ] Add explicit lifecycle transitions and remove commit auto-close.
