@@ -1,18 +1,22 @@
-# Tests: Modernize GedPi runtime contracts
+# Tests: Task-scoped governance kernel — slice 1
 
 ## Focused
 
-- `npm test -- tests/runtime.test.ts tests/agent-settings.test.ts tests/commands.test.ts tests/orchestration.test.ts tests/brain.test.ts tests/docs.test.ts`
-- `npm ls @earendil-works/pi-ai @earendil-works/pi-coding-agent @earendil-works/pi-tui pi-subagents pi-intercom`
-- `npm audit --audit-level=high`
+- `npm test -- tests/governance.test.ts`
+- `npm run check`
+- `npm run lint`
 
 ## Completion gates
 
-- `npm run check`
-- `npm run lint`
-- `npm run verify`
+- `npm run format`
+- `git diff --check`
 
-## Packaging
+## Scenario acceptance
 
-- `npm pack --dry-run` contains no nested `node_modules`, lockfiles, or vendored
-  dependency links.
+- Read-only intent wins regardless of breadth or risk.
+- Clear bounded reversible changes with deterministic verification resolve
+  direct-change even when two files are involved.
+- High-risk auth, migration, and release changes resolve planned-change.
+- Unresolved UI decisions block mutation under planned-change.
+- Explicit read-only/planned user constraints are preserved.
+- Coordinator escalation may raise direct-change to planned-change.

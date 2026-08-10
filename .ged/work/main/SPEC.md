@@ -1,30 +1,31 @@
-# Spec: Modernize GedPi runtime contracts
+# Spec: Task-scoped governance kernel — slice 1
 
 ## Goal
 
-Update the canonical GedPi repository from Pi 0.82.1, pi-subagents 0.37.2, and
-pi-intercom 0.6.0 to the approved current runtime set while preserving behavior,
-adopting current public contracts, adding maximum-reasoning compatibility, and
-clearing reachable high-severity npm advisories.
+Introduce the canonical pure governance vocabulary and resolver that selects
+`read-only`, `direct-change`, or `planned-change` from normalized user mutation
+intent, ambiguity, risk, change qualities, and optional coordinator escalation.
 
 ## Scope
 
-- Align `@earendil-works/pi-*` and `@mariozechner` npm aliases on 0.84.1.
-- Update pi-subagents to 0.45.1 and pi-intercom to 0.10.0.
-- Remove unsupported `acceptance.maxFinalizationTurns` guidance.
-- Add canonical `max` thinking support without removing legacy `xhigh`.
-- Reconcile only compatibility changes required by the installed packages.
-- Update focused tests, docs, and Unreleased changelog.
+- Add `src/governance.ts` as the canonical source for work mode, ambiguity,
+  risk, lifecycle, and execution-profile types.
+- Add a pure resolver with explicit precedence and a non-authorizing result.
+- Table-test the scenarios required by plan 001 plus explicit user constraints
+  and coordinator escalation.
 
 ## Non-goals
 
-- Do not implement work-mode governance, task identity, adaptive role selection,
-  or durable-memory simplification in this slice.
-- Do not broadly update unrelated dependencies or add compatibility fallbacks.
+- Do not change paths, persisted checkpoint state, guards, prompts, lifecycle
+  transitions, or legacy migration in this slice.
+- Do not infer risk from file count or task prose.
+- Do not make a planned-change classification authorize mutation.
 
 ## Acceptance
 
-- Requested packages resolve exactly with valid peers.
-- GPT-5.6 Luna + `thinking: max` can be configured and emitted.
-- Current acceptance examples contain only supported public fields.
-- Focused tests, `npm audit --audit-level=high`, and `npm run verify` pass.
+- No mutation intent always resolves read-only.
+- Direct change requires sufficient ambiguity, non-high risk, clear bounded
+  reversible scope, and deterministic verification.
+- High risk, unresolved ambiguity, an explicit requested plan, or coordinator
+  escalation resolves planned-change.
+- A user read-only constraint cannot be overridden.

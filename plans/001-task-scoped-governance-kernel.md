@@ -9,6 +9,7 @@
 
 ## Status
 
+- **Status**: IN PROGRESS — slice 1 complete; slice 2 next
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: HIGH
@@ -180,4 +181,3 @@ summarize naturally. Document governance versus execution as orthogonal planes.
 Keep branch names display-only. Any future lifecycle state must have one writer,
 one parser, and deterministic projection; do not reintroduce independent
 Markdown authority.
-
