@@ -59,7 +59,9 @@ describe("documentation coverage", () => {
     expect(orchestration).toContain("evidence");
     expect(orchestration).toContain("verify");
     expect(orchestration).toContain("stopRules");
-    expect(orchestration).toContain("maxFinalizationTurns");
+    expect(orchestration).not.toContain("maxFinalizationTurns");
+    expect(orchestration).toContain("workflowScript");
+    expect(orchestration).toContain("turnBudget");
     expect(orchestration).toContain(
       "Structured verifier and checkpoint evidence",
     );

@@ -131,8 +131,15 @@ function subagentCompletionRecords(
     status?: unknown;
     state?: unknown;
     exitCode?: unknown;
+    error?: unknown;
     detached?: unknown;
     interrupted?: unknown;
+    timedOut?: unknown;
+    stopped?: unknown;
+    turnBudgetExceeded?: unknown;
+    structuredOutputFailed?: unknown;
+    structuredOutput?: unknown;
+    acceptance?: { status?: unknown };
     progress?: { status?: unknown };
     runId?: unknown;
     asyncId?: unknown;
@@ -142,8 +149,15 @@ function subagentCompletionRecords(
       status?: unknown;
       state?: unknown;
       exitCode?: unknown;
+      error?: unknown;
       detached?: unknown;
       interrupted?: unknown;
+      timedOut?: unknown;
+      stopped?: unknown;
+      turnBudgetExceeded?: unknown;
+      structuredOutputFailed?: unknown;
+      structuredOutput?: unknown;
+      acceptance?: { status?: unknown };
       progress?: { status?: unknown };
       runId?: unknown;
       taskId?: unknown;
@@ -163,15 +177,19 @@ function subagentCompletionRecords(
       agent: result.agent,
     });
     if (detected) {
-      completions.push({
-        name: detected,
-        status: "completed",
-        metadata: workerMetadata(
-          result as Record<string, unknown>,
-          result as Record<string, unknown>,
-          sourceMode,
-        ),
-      });
+      const metadata = completionMetadata(
+        detected,
+        result as Record<string, unknown>,
+        result as Record<string, unknown>,
+        sourceMode,
+      );
+      if (metadata !== null) {
+        completions.push({
+          name: detected,
+          status: "completed",
+          metadata,
+        });
+      }
     }
   }
   if (Array.isArray(result.results)) {
@@ -186,19 +204,66 @@ function subagentCompletionRecords(
         agent: child.agent,
       });
       if (detected) {
+        const metadata = completionMetadata(
+          detected,
+          child as Record<string, unknown>,
+          result as Record<string, unknown>,
+          sourceMode,
+        );
+        if (metadata === null) continue;
         completions.push({
           name: detected,
           status: "completed",
-          metadata: workerMetadata(
-            child as Record<string, unknown>,
-            result as Record<string, unknown>,
-            sourceMode,
-          ),
+          metadata,
         });
       }
     }
   }
   return completions;
+}
+
+function cleanVerifierMetadata(
+  result: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const structuredOutput = result.structuredOutput;
+  if (
+    !structuredOutput ||
+    typeof structuredOutput !== "object" ||
+    Array.isArray(structuredOutput)
+  ) {
+    return null;
+  }
+  const output = structuredOutput as Record<string, unknown>;
+  if (
+    output.outcome !== "clean" ||
+    !Array.isArray(output.findings) ||
+    output.findings.length > 0
+  ) {
+    return null;
+  }
+  const acceptance = result.acceptance;
+  const acceptanceStatus =
+    acceptance && typeof acceptance === "object" && !Array.isArray(acceptance)
+      ? (acceptance as Record<string, unknown>).status
+      : undefined;
+  return {
+    verifierOutcome: "clean",
+    findingCount: 0,
+    ...(typeof acceptanceStatus === "string" ? { acceptanceStatus } : {}),
+  };
+}
+
+function completionMetadata(
+  agent: string,
+  result: Record<string, unknown>,
+  parent: Record<string, unknown>,
+  sourceMode: "foreground" | "async",
+): Record<string, unknown> | undefined | null {
+  if (agent === "ged-verifier") {
+    const verifier = cleanVerifierMetadata(result);
+    return verifier ? { ...verifier, sourceMode } : null;
+  }
+  return workerMetadata(result, parent, sourceMode);
 }
 
 function stringField(
@@ -236,7 +301,11 @@ function workerMetadata(
   const sliceId = stringField(result, parent, ["sliceId"]);
   if (sliceId) metadata.sliceId = sliceId;
   const artifactPath = stringField(result, parent, ["artifactPath"]);
-  if (artifactPath) metadata.artifactPath = artifactPath;
+  const canonicalArtifactPath =
+    typeof artifactPaths?.outputPath === "string"
+      ? artifactPaths.outputPath
+      : artifactPath;
+  if (canonicalArtifactPath) metadata.artifactPath = canonicalArtifactPath;
   if (artifactPaths) metadata.artifactPaths = artifactPaths;
   const diffPath =
     stringField(result, parent, ["diffPath"]) ??
@@ -278,11 +347,32 @@ function isSuccessfulSubagentResult(result: {
   status?: unknown;
   state?: unknown;
   exitCode?: unknown;
+  error?: unknown;
   detached?: unknown;
   interrupted?: unknown;
+  timedOut?: unknown;
+  stopped?: unknown;
+  turnBudgetExceeded?: unknown;
+  structuredOutputFailed?: unknown;
+  structuredOutput?: unknown;
+  acceptance?: { status?: unknown };
   progress?: { status?: unknown };
 }): boolean {
-  if (result.detached === true || result.interrupted === true) return false;
+  if (
+    result.detached === true ||
+    result.interrupted === true ||
+    result.timedOut === true ||
+    result.stopped === true ||
+    result.turnBudgetExceeded === true ||
+    result.structuredOutputFailed === true ||
+    result.acceptance?.status === "rejected" ||
+    result.acceptance?.status === "pending" ||
+    result.acceptance?.status === "claimed" ||
+    result.acceptance?.status === "review-required" ||
+    (typeof result.error === "string" && result.error.trim().length > 0)
+  ) {
+    return false;
+  }
   if (
     result.progress?.status === "running" ||
     result.progress?.status === "pending" ||
@@ -334,8 +424,15 @@ function subagentForegroundCompletionRecords(
       status?: unknown;
       state?: unknown;
       exitCode?: unknown;
+      error?: unknown;
       detached?: unknown;
       interrupted?: unknown;
+      timedOut?: unknown;
+      stopped?: unknown;
+      turnBudgetExceeded?: unknown;
+      structuredOutputFailed?: unknown;
+      structuredOutput?: unknown;
+      acceptance?: { status?: unknown };
       progress?: { status?: unknown };
       runId?: unknown;
       taskId?: unknown;
@@ -358,14 +455,17 @@ function subagentForegroundCompletionRecords(
       agent: result.agent,
     });
     if (detected) {
+      const metadata = completionMetadata(
+        detected,
+        result as Record<string, unknown>,
+        record,
+        "foreground",
+      );
+      if (metadata === null) continue;
       completions.push({
         name: detected,
         status: "completed",
-        metadata: workerMetadata(
-          result as Record<string, unknown>,
-          record,
-          "foreground",
-        ),
+        metadata,
       });
     }
   }
@@ -387,7 +487,7 @@ export default async function gedCoreExtension(
     const subagentName = detectSubagentDispatch("Agent", {
       subagent_type: event.type,
     });
-    if (!subagentName) return;
+    if (!subagentName || subagentName === "ged-verifier") return;
     void recordGedSubagentCheckpoint(activeCwd, subagentName).catch(() => {
       // Non-fatal — lifecycle events should not break the subagent runtime.
     });
@@ -674,6 +774,16 @@ export default async function gedCoreExtension(
       const completions = subagentForegroundCompletionRecords(event.details);
       if (completions.length > 0) {
         await recordGedSubagentCompletions(ctx.cwd, completions);
+      }
+    }
+
+    if (event.toolName === "subagent_wait" && !event.isError) {
+      const details = event.details as { completions?: unknown[] } | undefined;
+      for (const completion of details?.completions ?? []) {
+        const completions = subagentCompletionRecords(completion, "async");
+        if (completions.length > 0) {
+          await recordGedSubagentCompletions(ctx.cwd, completions);
+        }
       }
     }
 

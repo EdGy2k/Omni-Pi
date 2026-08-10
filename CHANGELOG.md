@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Dependencies
+
+- Updated the aligned Pi runtime (including agent-core) and compatibility aliases to 0.84.1,
+  `pi-subagents` to 0.45.1, and `pi-intercom` to 0.10.0. GedPi now uses the
+  public pi-subagents extension entrypoint and current `workflowScript` contract,
+  including deterministic foreground/wait completion handling.
+- Added compatible transitive security overrides for `brace-expansion`,
+  `nanoid`, `postcss`, and `undici`, clearing all reported npm audit findings.
+
+### Fixes
+
+- Added Pi's `max` thinking level to subagent model configuration, fallback
+  suffix parsing, status output, and interactive/headless commands.
+- Removed the unsupported `acceptance.maxFinalizationTurns` guidance, declared
+  read-only/writer acceptance roles explicitly, and stopped rejected, timed-out,
+  stopped, or otherwise failed child results from satisfying Ged checkpoints.
+- Required a strict clean/no-findings structured verifier outcome before an
+  automatically recorded verifier run can satisfy the commit checkpoint.
+- Recorded terminal asynchronous child identity and artifacts from
+  `subagent_wait` completion details instead of depending only on lifecycle
+  events, deduplicated worker audits across completion channels, and ignored
+  generated `.pi-subagents/` runtime artifacts.
+
 ## 0.19.2 - 2026-07-28
 
 ### Dependencies

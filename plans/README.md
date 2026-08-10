@@ -25,7 +25,7 @@ durable memory. Execute in order unless dependencies say otherwise.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |---|---|---|---|---|---|
-| 000 | Modernize Pi, subagent, and intercom contracts | P0 | M | — | TODO |
+| 000 | Modernize Pi, subagent, and intercom contracts | P0 | M | — | DONE |
 | 001 | Introduce the task-scoped governance kernel | P0 | L | 000 | TODO |
 | 002 | Bind mutation, plan approval, verification, and commits to content | P0 | L | 001 | TODO |
 | 003 | Add adaptive staffing and GPT-5.6 role profiles | P1 | M | 000, 001 | TODO |
@@ -86,4 +86,3 @@ Status values: `TODO` | `IN PROGRESS` | `DONE` | `BLOCKED: <reason>` |
   `changed-files` evidence from read-only agents. That failure itself supports
   replacing prompt/name inference with explicit read-only contracts. Their
   claims were independently checked before inclusion here.
-

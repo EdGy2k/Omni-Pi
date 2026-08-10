@@ -55,6 +55,8 @@
  * @property {PlannerOutcome} [outcome]
  * @property {number} [findingCount]
  * @property {boolean} [blocksCommit]
+ * @property {"clean"} [verifierOutcome]
+ * @property {string} [acceptanceStatus]
  * @property {string} [runId]
  * @property {string} [sliceId]
  * @property {string} [artifactPath]
@@ -747,12 +749,18 @@ export function recordPlanAcceptance(state, record) {
  */
 export function recordWorkerRun(state, run) {
   if (isCheckpointClosed(state)) return state;
+  const existingRuns = Array.isArray(state.workerRuns) ? state.workerRuns : [];
+  if (
+    run.runId &&
+    existingRuns.some(
+      (existing) => existing.runId && existing.runId === run.runId,
+    )
+  ) {
+    return state;
+  }
   return {
     ...state,
-    workerRuns: [
-      ...(Array.isArray(state.workerRuns) ? state.workerRuns : []),
-      { ...run, agent: "ged-worker" },
-    ],
+    workerRuns: [...existingRuns, { ...run, agent: "ged-worker" }],
   };
 }
 

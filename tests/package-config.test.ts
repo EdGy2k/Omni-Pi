@@ -42,12 +42,21 @@ describe("package Pi configuration", () => {
     };
 
     expect(packageJson.engines?.node).toBe(">=22.19.0");
-    expect(packageJson.dependencies?.["@earendil-works/pi-ai"]).toBe("0.82.1");
-    expect(packageJson.dependencies?.["@earendil-works/pi-coding-agent"]).toBe(
-      "0.82.1",
+    expect(packageJson.dependencies?.["@earendil-works/pi-ai"]).toBe("0.84.1");
+    expect(packageJson.dependencies?.["@earendil-works/pi-agent-core"]).toBe(
+      "0.84.1",
     );
-    expect(packageJson.dependencies?.["@earendil-works/pi-tui"]).toBe("0.82.1");
+    expect(packageJson.dependencies?.["@earendil-works/pi-coding-agent"]).toBe(
+      "0.84.1",
+    );
+    expect(packageJson.dependencies?.["@earendil-works/pi-tui"]).toBe("0.84.1");
     expect(packageJson.overrides).not.toHaveProperty("@earendil-works/pi-tui");
+    expect(packageJson.overrides).toMatchObject({
+      "brace-expansion": "5.0.9",
+      nanoid: "3.3.18",
+      postcss: "8.5.26",
+      undici: "8.9.0",
+    });
     expect(packageJson.dependencies?.["@plannotator/pi-extension"]).toBe(
       "0.25.0",
     );

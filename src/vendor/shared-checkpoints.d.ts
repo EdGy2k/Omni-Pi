@@ -32,6 +32,8 @@ export interface CheckpointRecord {
   outcome?: PlannerOutcome;
   findingCount?: number;
   blocksCommit?: boolean;
+  verifierOutcome?: "clean";
+  acceptanceStatus?: string;
   runId?: string;
   taskId?: string;
   sliceId?: string;

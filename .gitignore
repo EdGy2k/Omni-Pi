@@ -3,6 +3,7 @@ node_modules/
 .omni/
 .omnicode/
 .pi/
+.pi-subagents/
 .env
 .env.*
 *.log

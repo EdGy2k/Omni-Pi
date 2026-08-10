@@ -42,23 +42,27 @@ describe("Ged runtime flow", () => {
 
   test("bundles current pi-subagents and pi-intercom", () => {
     expect(packageJson.dependencies).toMatchObject({
-      "pi-subagents": "0.37.2",
-      "pi-intercom": "0.6.0",
+      "pi-subagents": "0.45.1",
+      "pi-intercom": "0.10.0",
+      "@earendil-works/pi-agent-core": "0.84.1",
       "@mariozechner/pi-coding-agent":
-        "npm:@earendil-works/pi-coding-agent@0.82.1",
-      "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.82.1",
+        "npm:@earendil-works/pi-coding-agent@0.84.1",
+      "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.84.1",
     });
     expect(packageJson.dependencies).not.toHaveProperty(
       "@tintinweb/pi-subagents",
     );
     expect(packageJson.pi.extensions).toEqual(
       expect.arrayContaining([
-        "./node_modules/pi-subagents/src/extension/index.ts",
+        "./node_modules/pi-subagents/index.ts",
         "./node_modules/pi-intercom/index.ts",
       ]),
     );
     expect(packageJson.pi.extensions).not.toContain(
       "./node_modules/@tintinweb/pi-subagents/src/index.ts",
+    );
+    expect(packageJson.pi.extensions).not.toContain(
+      "./node_modules/pi-subagents/src/extension/index.ts",
     );
     expect(packageJson.pi.skills).toContain(
       "./node_modules/pi-intercom/skills",
@@ -68,11 +72,14 @@ describe("Ged runtime flow", () => {
     );
 
     expect(packageLock.packages["node_modules/pi-subagents"]).toMatchObject({
-      version: "0.37.2",
+      version: "0.45.1",
     });
     expect(packageLock.packages["node_modules/pi-intercom"]).toMatchObject({
-      version: "0.6.0",
+      version: "0.10.0",
     });
+    expect(
+      packageLock.packages["node_modules/@earendil-works/pi-agent-core"],
+    ).toMatchObject({ version: "0.84.1" });
   });
 
   test("configured Pi extension paths exist", async () => {
@@ -91,6 +98,14 @@ describe("Ged runtime flow", () => {
       path.resolve("node_modules/pi-intercom/index.ts"),
     );
     expect(typeof intercomModule.default).toBe("function");
+  });
+
+  test("pi-subagents loads through its public package entrypoint", async () => {
+    const jiti = createJiti(import.meta.url);
+    const subagentsModule = await jiti.import<{ default?: unknown }>(
+      "pi-subagents",
+    );
+    expect(typeof subagentsModule.default).toBe("function");
   });
 
   test("prepareNextTaskDispatch creates a task brief and marks the task in progress", async () => {

@@ -27,8 +27,8 @@ Future orchestration work should follow `docs/single-writer-intelligence-orchest
 - `ged-core` — brain workflow, header, shortcuts, updater, and `.ged/` durable memory bootstrap
 - `glimpseui` — native micro-UI windows and floating companion widget
 - `pi-web-access` — web search and fetch tools
-- `pi-subagents` — subagent tool, chains/parallelism, Ged-specific roles, and optional settings-gated worker support
-- `pi-intercom` — direct supervisor coordination for blocked subagent decisions
+- `pi-subagents` — `workflowScript` subagent runtime, native child-supervisor coordination, Ged-specific roles, and optional settings-gated worker support
+- `pi-intercom` — optional communication between independent Pi sessions; it is not the authority path for spawned-child decisions
 - `pi-diff-review` — diff review surface
 - `pi-prompt-template-model` — prompt template / model wiring
 - `@plannotator/pi-extension` — visual plan/code review UI used by the `plannotator` draft-plan review preference

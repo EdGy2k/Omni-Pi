@@ -35,6 +35,7 @@ const ALLOWED_THINKING_LEVELS = new Set([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 
 export function splitFallbackThinkingSuffix(ref: string): {
@@ -627,7 +628,8 @@ function commonFrontmatter(
     : "read, grep, find, ls, bash";
   const inheritProjectContext = options.worker ? "true" : "false";
   const completionGuard = options.worker ? "true" : "false";
-  return `name: ${role}\n${frontmatterModelLines(config)}tools: ${tools}\nsystemPromptMode: replace\ninheritProjectContext: ${inheritProjectContext}\ninheritSkills: false\ncompletionGuard: ${completionGuard}\n`;
+  const acceptanceRole = options.worker ? "writer" : "read-only";
+  return `name: ${role}\n${frontmatterModelLines(config)}tools: ${tools}\nsystemPromptMode: replace\ninheritProjectContext: ${inheritProjectContext}\ninheritSkills: false\nacceptanceRole: ${acceptanceRole}\ncompletionGuard: ${completionGuard}\n`;
 }
 
 function bundledRolePrompt(
@@ -686,6 +688,8 @@ ${commonFrontmatter(role, effective)}---
 
 You are a clean-context reviewer. Inspect diffs, tests, logs, and scope match. Report findings with severity, evidence, suggested fix, confidence, and whether each blocks commit.
 
+The dispatch must provide a strict structured output schema with \`outcome\` (\`clean\` or \`findings\`) and a \`findings\` array. Return \`outcome: "clean"\` only when the findings array is empty. Any finding, including non-blocking findings, uses \`outcome: "findings"\` so the main agent can adjudicate it before a fresh verifier run.
+
 Never edit files, adjudicate acceptance, commit, push, or open PRs. The main agent owns final judgment, fixes accepted findings directly by default, reruns verification, and commits.
 `,
     "ged-worker": `---
@@ -696,7 +700,7 @@ ${commonFrontmatter(role, effective, { worker: true })}---
 
 You implement only the approved slice assigned by the main Ged agent after its worker-suitability check. Stay inside the task boundaries and report anything that changes scope.
 
-When the dispatch includes a pi-subagents acceptance contract, satisfy the listed criteria, evidence, verification commands, and stop rules, then provide the required structured acceptance report. A typical contract uses only the current object schema: acceptance: { criteria: [{ id: "slice", must: "Implement only the assigned slice" }], evidence: ["changed-files", "commands-run", "diff-summary", "residual-risks"], verify: [{ id: "focused", command: "<focused check>", timeoutMs: 120000 }], stopRules: ["Stop if scope expands or product/API judgment is needed"], maxFinalizationTurns: 2 }.
+When the dispatch includes a pi-subagents acceptance contract, satisfy the listed criteria, evidence, verification commands, and stop rules, then provide the required structured acceptance report. A typical current contract uses \`acceptance: { level: "verified", criteria: [{ id: "slice", must: "Implement only the assigned slice" }], evidence: ["changed-files", "commands-run", "diff-summary", "residual-risks"], verify: [{ id: "focused", command: "<focused check>", timeoutMs: 120000 }], stopRules: ["Stop if scope expands or product/API judgment is needed"] }\`. Use the separate top-level \`turnBudget: { maxTurns: 8, graceTurns: 2 }\` runtime control when a bounded finalization budget is appropriate.
 
 Allowed when explicitly enabled:
 - Edit source for the assigned slice.

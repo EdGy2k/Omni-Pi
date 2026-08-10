@@ -259,6 +259,9 @@ describe("Ged optional agent settings", () => {
       ),
     ).resolves.toContain("Ged Plan Reviewer");
     await expect(
+      readFile(path.join(rootDir, ".pi", "agents", "ged-verifier.md"), "utf8"),
+    ).resolves.toContain("strict structured output schema");
+    await expect(
       readFile(path.join(rootDir, ".pi", "agents", "ged-worker.md"), "utf8"),
     ).rejects.toThrow();
   });
@@ -273,25 +276,40 @@ describe("Ged optional agent settings", () => {
 
     await syncGedSubagentRuntimeConfig(rootDir, { homeDir });
 
+    type PreflightResult =
+      | { ok: true; contract: { agent: { name: string } } }
+      | { ok: false; code: string };
     const jiti = createJiti(import.meta.url);
-    const agentsModule = await jiti.import<{
-      discoverAgents: (
-        cwd: string,
-        scope: "project",
-      ) => { agents: Array<{ name: string }> };
-    }>(path.resolve("node_modules/pi-subagents/src/agents/agents.ts"));
-    const discovered = agentsModule.discoverAgents(rootDir, "project");
-    expect(discovered.agents.map((agent) => agent.name)).toEqual(
-      expect.arrayContaining([
-        "ged-explorer",
-        "ged-planner",
-        "ged-plan-reviewer",
-        "ged-verifier",
-      ]),
-    );
-    expect(discovered.agents.map((agent) => agent.name)).not.toContain(
-      "ged-worker",
-    );
+    const { resolveSubagentLaunchContract } = await jiti.import<{
+      resolveSubagentLaunchContract(input: {
+        agent: string;
+        cwd: string;
+        agentScope: "project";
+        artifacts: false;
+      }): Promise<PreflightResult>;
+    }>(import.meta.resolve("pi-subagents/preflight"));
+    for (const role of [
+      "ged-explorer",
+      "ged-planner",
+      "ged-plan-reviewer",
+      "ged-verifier",
+    ]) {
+      const result = await resolveSubagentLaunchContract({
+        agent: role,
+        cwd: rootDir,
+        agentScope: "project",
+        artifacts: false,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.contract.agent.name).toBe(role);
+    }
+    const worker = await resolveSubagentLaunchContract({
+      agent: "ged-worker",
+      cwd: rootDir,
+      agentScope: "project",
+      artifacts: false,
+    });
+    expect(worker).toMatchObject({ ok: false, code: "missing_agent" });
   });
 
   test("runtime sync maps explicit intercom setting to pi-subagents bridge config", async () => {
@@ -345,6 +363,48 @@ describe("Ged optional agent settings", () => {
     await expect(
       readFile(path.join(rootDir, ".pi", "agents", "ged-verifier.md"), "utf8"),
     ).resolves.toContain("thinking: off");
+  });
+
+  test("runtime sync preserves Pi maximum thinking and strips it for availability", async () => {
+    const rootDir = await tempDir("ged-agent-sync-root-");
+    const availabilityChecks: string[] = [];
+    await writeGedAgentsSettings(projectGedSettingsPath(rootDir), {
+      enabled: true,
+      roles: {
+        "ged-worker": {
+          enabled: true,
+          model: "openai-codex/gpt-5.6-luna",
+          thinking: "max",
+          fallback: ["openai-codex/gpt-5.6-sol:max"],
+        },
+      },
+    });
+
+    await syncGedSubagentRuntimeConfig(rootDir);
+
+    const worker = await readFile(
+      path.join(rootDir, ".pi", "agents", "ged-worker.md"),
+      "utf8",
+    );
+    expect(worker).toContain("model: openai-codex/gpt-5.6-luna");
+    expect(worker).toContain("thinking: max");
+    expect(worker).toContain("fallbackModels: openai-codex/gpt-5.6-sol:max");
+    expect(
+      selectAgentModel(
+        {
+          model: "provider/missing",
+          fallback: ["openai-codex/gpt-5.6-sol:max"],
+        },
+        {
+          isAvailable(modelId) {
+            availabilityChecks.push(modelId);
+            return modelId === "openai-codex/gpt-5.6-sol";
+          },
+        },
+      ),
+    ).toBe("openai-codex/gpt-5.6-sol:max");
+    expect(availabilityChecks).toContain("openai-codex/gpt-5.6-sol");
+    expect(availabilityChecks).not.toContain("openai-codex/gpt-5.6-sol:max");
   });
 
   test("runtime sync ignores invalid thinking levels", async () => {
@@ -485,11 +545,13 @@ describe("Ged optional agent settings", () => {
     expect(worker).toContain("main agent should implement it directly");
     expect(worker).toContain("new isolated mechanical slice");
     expect(worker).toContain("Do not commit, push, rebase, merge");
-    expect(worker).toContain("acceptance: { criteria:");
+    expect(worker).toContain('acceptance: { level: "verified", criteria:');
     expect(worker).toContain("changed-files");
     expect(worker).toContain("commands-run");
     expect(worker).toContain("stopRules");
-    expect(worker).toContain("maxFinalizationTurns");
+    expect(worker).not.toContain("maxFinalizationTurns");
+    expect(worker).toContain("turnBudget");
+    expect(worker).toContain("acceptanceRole: writer");
   });
 
   test("runtime sync disables legacy ged-brain project agent", async () => {
@@ -522,6 +584,22 @@ describe("Ged optional agent settings", () => {
     };
     expect(formatGedAgentsStatus(effective)).toContain(
       "- ged-planner: enabled; openai/gpt-5.5 [thinking: off]",
+    );
+  });
+
+  test("status reports maximum thinking", () => {
+    const effective = effectiveFixture({
+      models: {
+        "ged-worker": {
+          model: "openai-codex/gpt-5.6-luna",
+          thinking: "max",
+        },
+      },
+    });
+    effective.roles["ged-worker"].enabled = true;
+    effective.roles["ged-worker"].model = effective.models["ged-worker"];
+    expect(formatGedAgentsStatus(effective)).toContain(
+      "openai-codex/gpt-5.6-luna [thinking: max]",
     );
   });
 

@@ -268,7 +268,7 @@ describe("Ged command surface", () => {
       });
       await command?.execute({
         cwd,
-        args: ["thinking", "ged-worker", "medium", "--project"],
+        args: ["thinking", "ged-worker", "max", "--project"],
       });
       await command?.execute({
         cwd,
@@ -295,7 +295,7 @@ describe("Ged command surface", () => {
           "ged-worker": {
             enabled: true,
             model: "openai/gpt-5.5",
-            thinking: "medium",
+            thinking: "max",
             fallback: ["anthropic/claude-sonnet-4"],
             maxParallel: 4,
             preferWorktreeIsolation: true,

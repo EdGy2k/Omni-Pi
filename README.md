@@ -71,8 +71,8 @@ Current deferred roadmap items remain intentional and visible in docs rather tha
 | **ged-core** | Brain workflow, `.ged/` durable memory bootstrap, header, session init, shortcuts, updater, and system prompt injection |
 | **glimpseui** | Native micro-UI windows and the optional floating companion widget |
 | **pi-web-access** | Web search and fetch tools for the agent |
-| **pi-subagents** | `subagent` tool for Ged explorer/planner/plan-reviewer/verifier roles and optional settings-gated workers; generic builtins are hidden by default |
-| **pi-intercom** | Direct supervisor coordination for blocked subagents via `contact_supervisor` / intercom |
+| **pi-subagents** | `workflowScript` subagent runtime for Ged explorer/planner/plan-reviewer/verifier roles, native child-supervisor coordination, and optional settings-gated workers; generic builtins are hidden by default |
+| **pi-intercom** | Optional messaging between independent Pi sessions; spawned-child decisions use pi-subagents' native supervisor channel |
 | **pi-diff-review** | Native git diff review window that inserts structured review feedback into the editor |
 | **pi-prompt-template-model** | Prompt templates can set thinking/model behavior and back commands like `/commit` and `/push` |
 | **@plannotator/pi-extension** | Plan/code review UI; GedPi draft-plan approval prefers native Glimpse when available and falls back to Plannotator's browser UI |

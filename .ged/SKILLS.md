@@ -23,3 +23,7 @@
 ## Usage Notes
 
 - Record why a skill was installed, recommended, or skipped.
+- 2026-08-10 workflow redesign: `improve` produced the read-only audit and
+  ordered plans; `ged-planning`, `ged-execution`, and `ged-verification` cover
+  implementation. `pi-subagents` is used only for focused read-only compatibility
+  review. No new project skill is warranted for a one-time dependency migration.

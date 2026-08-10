@@ -43,6 +43,7 @@ const THINKING_LEVELS = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as const;
 
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -297,6 +298,7 @@ async function pickThinkingLevel(
     "Medium",
     "High",
     "XHigh",
+    "Max",
     "Cancel",
   ]);
   if (!choice || choice === "Cancel") return "cancel";

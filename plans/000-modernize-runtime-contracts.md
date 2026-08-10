@@ -9,6 +9,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P0
 - **Effort**: M
 - **Risk**: MED
@@ -120,13 +121,13 @@ compatibility change. Commit with a conventional dependency/migration message.
 
 ## Done criteria
 
-- [ ] Pi packages/aliases are `0.84.1`.
-- [ ] pi-subagents is `0.45.1`; pi-intercom is `0.10.0`.
-- [ ] `max` reasoning round-trips and emits correctly.
-- [ ] No generated example contains `maxFinalizationTurns`.
-- [ ] High-severity npm audit is clear.
-- [ ] Focused tests and `npm run verify` pass.
-- [ ] Changelog and runtime docs match the installed APIs.
+- [x] Pi packages/aliases are `0.84.1`.
+- [x] pi-subagents is `0.45.1`; pi-intercom is `0.10.0`.
+- [x] `max` reasoning round-trips and emits correctly.
+- [x] No generated example contains `maxFinalizationTurns`.
+- [x] High-severity npm audit is clear.
+- [x] Focused tests and `npm run verify` pass.
+- [x] Changelog and runtime docs match the installed APIs.
 
 ## STOP conditions
 
@@ -142,4 +143,3 @@ compatibility change. Commit with a conventional dependency/migration message.
 
 Keep Pi packages and `@mariozechner` aliases aligned. Future orchestration plans
 must cite the installed pi-subagents docs, not historical prompt examples.
-

@@ -96,13 +96,20 @@ describe("Ged brain runtime", () => {
       "Do not end the turn after only describing the next step",
     );
     expect(prompt).toContain("make that tool call in the same response");
-    expect(prompt).toContain('subagent({ agent: "ged-explorer"');
+    expect(prompt).toContain("workflowScript");
+    expect(prompt).toContain("runs.run");
+    expect(prompt).toContain("async: false");
+    expect(prompt).toContain("subagent_wait");
+    expect(prompt).toContain("outputSchema");
+    expect(prompt).toContain("outcome");
+    expect(prompt).toContain("findings");
     expect(prompt).toContain("ged-planner");
     expect(prompt).toContain("criteria");
     expect(prompt).toContain("evidence");
     expect(prompt).toContain("verify");
     expect(prompt).toContain("stopRules");
-    expect(prompt).toContain("maxFinalizationTurns");
+    expect(prompt).not.toContain("maxFinalizationTurns");
+    expect(prompt).toContain("turnBudget");
     expect(prompt).toContain("## Plan Review Preference");
     expect(prompt).toContain(
       "Current setting: Review with Plannotator (plannotator)",
@@ -359,6 +366,98 @@ describe("Ged brain runtime", () => {
       (await readCheckpointState(rootDir))?.planCheckpoints["ged-planner"],
     ).toBeUndefined();
 
+    await runHandler(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolName: "subagent",
+        isError: false,
+        input: { workflowScript: "return runs.run('verify', {})" },
+        details: {
+          mode: "workflow",
+          results: [
+            {
+              agent: "ged-verifier",
+              exitCode: 0,
+              acceptance: { status: "rejected" },
+            },
+          ],
+        },
+      },
+      { cwd: rootDir },
+    );
+    expect(
+      (await readCheckpointState(rootDir))?.taskCheckpoints.auto?.[
+        "ged-verifier"
+      ],
+    ).toBeUndefined();
+
+    for (const childResult of [
+      { agent: "ged-verifier", exitCode: 0 },
+      {
+        agent: "ged-verifier",
+        exitCode: 0,
+        acceptance: { status: "review-required" },
+        structuredOutput: { outcome: "clean", findings: [] },
+      },
+      {
+        agent: "ged-verifier",
+        exitCode: 0,
+        acceptance: { status: "not-required" },
+        structuredOutput: {
+          outcome: "findings",
+          findings: [{ severity: "blocker", issue: "Broken behavior" }],
+        },
+      },
+    ]) {
+      await runHandler(
+        "tool_result",
+        {
+          type: "tool_result",
+          toolName: "subagent",
+          isError: false,
+          input: { workflowScript: "return runs.run('verify', {})" },
+          details: { mode: "workflow", results: [childResult] },
+        },
+        { cwd: rootDir },
+      );
+    }
+    expect(
+      (await readCheckpointState(rootDir))?.taskCheckpoints.auto?.[
+        "ged-verifier"
+      ],
+    ).toBeUndefined();
+
+    await runHandler(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolName: "subagent",
+        isError: false,
+        input: { workflowScript: "return runs.run('verify', {})" },
+        details: {
+          mode: "workflow",
+          results: [
+            {
+              agent: "ged-verifier",
+              exitCode: 0,
+              acceptance: { status: "not-required" },
+              structuredOutput: { outcome: "clean", findings: [] },
+            },
+          ],
+        },
+      },
+      { cwd: rootDir },
+    );
+    expect(
+      (await readCheckpointState(rootDir))?.taskCheckpoints.auto?.[
+        "ged-verifier"
+      ],
+    ).toMatchObject({
+      status: "completed",
+      verifierOutcome: "clean",
+    });
+
     for (const childResult of [
       { agent: "ged-planner", exitCode: 0, progress: { status: "running" } },
       { agent: "ged-planner", exitCode: 0, status: "pending" },
@@ -477,6 +576,44 @@ describe("Ged brain runtime", () => {
       sourceMode: "foreground",
     });
 
+    await runHandler(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolName: "subagent_wait",
+        isError: false,
+        input: { id: "waited-run" },
+        details: {
+          completions: [
+            {
+              runId: "waited-run",
+              mode: "workflow",
+              state: "complete",
+              success: true,
+              results: [
+                {
+                  agent: "ged-worker",
+                  runId: "worker-waited",
+                  success: true,
+                  artifactPaths: {
+                    outputPath: ".pi/subagents/worker-waited/output.md",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      { cwd: rootDir },
+    );
+    const waitedState = await readCheckpointState(rootDir);
+    expect(waitedState?.workerRuns).toHaveLength(3);
+    expect(waitedState?.workerRuns?.[2]).toMatchObject({
+      runId: "worker-waited",
+      artifactPath: ".pi/subagents/worker-waited/output.md",
+      sourceMode: "async",
+    });
+
     eventHandlers.get("subagent:async-complete")?.({
       mode: "single",
       agent: "ged-worker",
@@ -489,14 +626,14 @@ describe("Ged brain runtime", () => {
     let asyncState = await readCheckpointState(rootDir);
     for (
       let attempt = 0;
-      attempt < 20 && asyncState?.workerRuns?.length !== 3;
+      attempt < 20 && asyncState?.workerRuns?.length !== 4;
       attempt++
     ) {
       await new Promise((resolve) => setTimeout(resolve, 5));
       asyncState = await readCheckpointState(rootDir);
     }
-    expect(asyncState?.workerRuns).toHaveLength(3);
-    expect(asyncState?.workerRuns?.[2]).toMatchObject({
+    expect(asyncState?.workerRuns).toHaveLength(4);
+    expect(asyncState?.workerRuns?.[3]).toMatchObject({
       runId: "async-run",
       sliceId: "T01c",
       sourceMode: "async",

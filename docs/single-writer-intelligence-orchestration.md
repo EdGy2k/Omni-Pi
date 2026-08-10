@@ -20,7 +20,9 @@ The rule to preserve is:
 - `ged-verifier` performs clean-context review of diffs and verification evidence before commits.
 - `ged-worker` is optional and disabled by default. When enabled, it may implement bounded approved slices, including parallel disjoint slices, only after the main agent performs a worker-suitability check. It must not commit, push, rebase, merge, make product decisions, or replace verifier/main acceptance.
 - Intern/ops agent remains deferred/absent.
-- `pi-intercom` / `contact_supervisor` is for blocked decisions or progress-changing discoveries, not routine completion handoffs.
+- `contact_supervisor` is for blocked decisions or progress-changing discoveries,
+  not routine completion handoffs. pi-subagents owns the native spawned-child
+  channel; external pi-intercom remains available for independent sessions.
 
 ## Settings model
 
@@ -86,6 +88,10 @@ Risk reviewer for accepted planner drafts. It separates blockers from non-blocki
 ### `ged-verifier`
 
 Clean-context review and verification support. It reports findings with evidence, confidence, suggested fix, and commit-blocking status. The main brain adjudicates, fixes accepted findings directly by default, and reruns verification.
+Verifier dispatches must use a strict structured output schema with an `outcome`
+of `clean` or `findings` and a `findings` array. Only `clean` with an empty array
+is auto-recorded as a satisfied verifier checkpoint; process success or an
+incomplete/rejected acceptance ledger is not enough.
 
 ### `ged-worker`
 
@@ -163,28 +169,38 @@ Example worker handoff shape:
 
 ```ts
 subagent({
-  agent: "ged-worker",
-  task: "Implement only approved slice T03 from .ged/work/<work-id>/TASKS.md.",
-  acceptance: {
-    criteria: [
-      { id: "slice", must: "Implement only the assigned T03 scope" },
-      { id: "tests", must: "Run the focused verification listed for T03" }
-    ],
-    evidence: ["changed-files", "commands-run", "diff-summary", "residual-risks"],
-    verify: [
-      { id: "focused", command: "npm test -- tests/foo.test.ts", timeoutMs: 120000 }
-    ],
-    stopRules: [
-      "Stop if scope expands beyond T03",
-      "Stop if product/API/security judgment is needed"
-    ],
-    maxFinalizationTurns: 2
-  },
+  workflowScript: `return runs.run("T03", {
+    agent: "ged-worker",
+    task: "Implement only approved slice T03 from .ged/work/<work-id>/TASKS.md.",
+    acceptance: {
+      level: "verified",
+      criteria: [
+        { id: "slice", must: "Implement only the assigned T03 scope" },
+        { id: "tests", must: "Run the focused verification listed for T03" }
+      ],
+      evidence: ["changed-files", "commands-run", "diff-summary", "residual-risks"],
+      verify: [
+        { id: "focused", command: "npm test -- tests/foo.test.ts", timeoutMs: 120000 }
+      ],
+      stopRules: [
+        "Stop if scope expands beyond T03",
+        "Stop if product/API/security judgment is needed"
+      ]
+    }
+  })`,
+  async: false,
+  turnBudget: { maxTurns: 8, graceTurns: 2 },
   timeoutMs: 600000
 })
 ```
 
-Do not use obsolete public acceptance shorthands such as `level`. The supported public shape is object-based: `criteria`, `evidence`, `verify`, optional `review`, `stopRules`, and `maxFinalizationTurns`.
+The current public execution surface is `workflowScript` with stable-key
+`runs.run`/`runs.all` calls. Acceptance supports `level`, `criteria`, `evidence`,
+`verify`, optional `review`, and `stopRules`. Turn limits belong in the separate
+top-level `turnBudget`; wall-clock limits use `timeoutMs`/`maxRuntimeMs`.
+Top-level workflows now start asynchronously by default. Mandatory checkpoint
+runs should pass `async: false`, or the coordinator must call `subagent_wait` and
+consume terminal `details.completions` before continuing.
 
 ## Deferred orchestration roadmap from Pi 0.78 / pi-subagents 0.28
 

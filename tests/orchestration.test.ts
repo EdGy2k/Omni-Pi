@@ -9,6 +9,7 @@ import {
   closeCheckpointState,
   detectRecentCommits,
   detectSubagentDispatch,
+  detectSubagentDispatches,
   initCheckpointState,
   invalidateVerifierCheckpoints,
   isGitCommitCommand,
@@ -823,6 +824,29 @@ describe("checkpoint validation", () => {
     expect(validateCommitCheckpoints(state).valid).toBe(false);
   });
 
+  it("deduplicates worker audit records by run identity", () => {
+    let state = makeValidV2State();
+    for (const sourceMode of ["async", "foreground"] as const) {
+      state = recordAutoCheckpoint(
+        state,
+        {
+          agent: "ged-worker",
+          timestamp: "2026-05-07T10:30:00Z",
+          status: "completed",
+          runId: "same-run",
+          sourceMode,
+        },
+        "T01",
+      );
+    }
+
+    expect(state.workerRuns).toHaveLength(1);
+    expect(state.workerRuns?.[0]).toMatchObject({
+      runId: "same-run",
+      sourceMode: "async",
+    });
+  });
+
   it("worker completion preserves explicit task metadata over checkpoint bucket", () => {
     const state = recordAutoCheckpoint(
       makeValidV2State(),
@@ -1030,7 +1054,7 @@ describe("invalidateVerifierCheckpoints", () => {
 });
 
 describe("subagent dispatch detection", () => {
-  it("recognizes legacy Agent and current subagent calls for Ged roles", () => {
+  it("recognizes legacy Agent and terminal child identities for Ged roles", () => {
     expect(
       detectSubagentDispatch("Agent", { subagent_type: "ged-planner" }),
     ).toBe("ged-planner");
@@ -1040,6 +1064,14 @@ describe("subagent dispatch detection", () => {
     expect(detectSubagentDispatch("subagent", { agent: "ged-worker" })).toBe(
       "ged-worker",
     );
+  });
+
+  it("does not infer child identity by parsing opaque workflowScript", () => {
+    expect(
+      detectSubagentDispatches("subagent", {
+        workflowScript: "return runs.run('dynamic', getRuntimeSelectedChild())",
+      }),
+    ).toEqual([]);
   });
 
   it("rejects legacy task/subagent shapes", () => {
@@ -1157,12 +1189,16 @@ describe("orchestration prompt", () => {
     expect(result).toContain("Do not re-invoke worker for verifier fixes");
     expect(result).toContain("rare new isolated mechanical slice");
     expect(result).toContain("rerun verification");
-    expect(result).toContain("acceptance: { criteria:");
+    expect(result).toContain('acceptance: { level: "verified", criteria:');
     expect(result).toContain("changed-files");
     expect(result).toContain("commands-run");
     expect(result).toContain("diff-summary");
     expect(result).toContain("stopRules");
-    expect(result).toContain("maxFinalizationTurns");
+    expect(result).not.toContain("maxFinalizationTurns");
+    expect(result).toContain("turnBudget");
+    expect(result).toContain("outputSchema");
+    expect(result).toContain("outcome");
+    expect(result).toContain("findings");
   });
 
   it("requires immediate tool-call continuation instead of status-only narration", () => {
@@ -1176,7 +1212,11 @@ describe("orchestration prompt", () => {
 
   it("references subagent tool for dispatch", () => {
     const result = buildOrchestrationPrompt(true);
-    expect(result).toContain('subagent({ agent: "ged-planner"');
+    expect(result).toContain("workflowScript");
+    expect(result).toContain("runs.run");
+    expect(result).toContain("async: false");
+    expect(result).toContain("subagent_wait");
+    expect(result).not.toContain('subagent({ agent: "ged-planner"');
     expect(result).toContain("subagent:async-complete");
   });
 
