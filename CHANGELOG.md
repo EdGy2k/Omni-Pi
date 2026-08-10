@@ -12,6 +12,11 @@
 - Added a strict authoritative governance-state store with monotonic revisions,
   stale compare-and-swap rejection, serialized evidence appends, and
   regenerable non-authoritative Markdown projections.
+- Added fail-closed migration for legacy branch/root checkpoint state. GedPi
+  now preserves legacy artifacts in an immutable ignored backup and imports
+  only one unambiguously active record as paused, non-selectable work requiring
+  human migration review; ambiguous or unsupported records never authorize
+  mutation.
 
 ### Dependencies
 

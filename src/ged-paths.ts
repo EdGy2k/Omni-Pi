@@ -58,6 +58,12 @@ export interface WorkItemMeta {
   createdAt: string;
   branch: string | null;
   baseHead: string | null;
+  origin?: {
+    kind: "legacy-import";
+    migrationId: string;
+    candidateId: string;
+    selectable: false;
+  };
 }
 
 export interface OpenedGedWork {
@@ -76,7 +82,8 @@ export class WorkSelectionError extends Error {
       | "missing-pointer"
       | "invalid-pointer"
       | "missing-work"
-      | "invalid-work-meta",
+      | "invalid-work-meta"
+      | "non-selectable-work",
   ) {
     super(message);
     this.name = "WorkSelectionError";
@@ -348,6 +355,7 @@ function parseWorkMeta(raw: string, workId: string): WorkItemMeta {
     );
   }
   const meta = value as Partial<WorkItemMeta>;
+  const origin = meta.origin;
   if (
     meta.schemaVersion !== 1 ||
     meta.workId !== workId ||
@@ -356,7 +364,20 @@ function parseWorkMeta(raw: string, workId: string): WorkItemMeta {
     typeof meta.createdAt !== "string" ||
     Number.isNaN(Date.parse(meta.createdAt)) ||
     !(meta.branch === null || typeof meta.branch === "string") ||
-    !(meta.baseHead === null || typeof meta.baseHead === "string")
+    !(meta.baseHead === null || typeof meta.baseHead === "string") ||
+    !(
+      origin === undefined ||
+      (origin !== null &&
+        typeof origin === "object" &&
+        !Array.isArray(origin) &&
+        Object.keys(origin).length === 4 &&
+        origin.kind === "legacy-import" &&
+        typeof origin.migrationId === "string" &&
+        origin.migrationId.trim().length > 0 &&
+        typeof origin.candidateId === "string" &&
+        origin.candidateId.trim().length > 0 &&
+        origin.selectable === false)
+    )
   ) {
     throw new WorkSelectionError(
       `Ged work ${workId} has an invalid or unsupported META.json.`,
@@ -364,6 +385,15 @@ function parseWorkMeta(raw: string, workId: string): WorkItemMeta {
     );
   }
   return meta as WorkItemMeta;
+}
+
+function requireSelectableWork(meta: WorkItemMeta): void {
+  if (meta.origin?.kind === "legacy-import" && !meta.origin.selectable) {
+    throw new WorkSelectionError(
+      `Ged work ${meta.workId} is a paused legacy import and cannot be selected. Open new work after reviewing its migration backup.`,
+      "non-selectable-work",
+    );
+  }
 }
 
 export async function readWorkItemMeta(
@@ -477,7 +507,7 @@ export async function ensureActiveGedWork(
   return withProcessQueue(pointerPath, async () => {
     const existing = await readActiveWorkPointer(rootDir, selectedSession);
     if (existing) {
-      await readWorkItemMeta(rootDir, existing.workId);
+      requireSelectableWork(await readWorkItemMeta(rootDir, existing.workId));
       return existing;
     }
     const { meta } = await createWorkItem(rootDir, "Ged bootstrap work");
@@ -526,6 +556,7 @@ export async function continueGedWork(
   const pointerPath = activeWorkPointerPath(rootDir, identity.sessionId);
   return withProcessQueue(pointerPath, async () => {
     const meta = await readWorkItemMeta(rootDir, workId);
+    requireSelectableWork(meta);
     const paths = gedPathsForWorkId(rootDir, workId);
     const pointer: ActiveWorkPointer = {
       schemaVersion: 1,
@@ -555,7 +586,7 @@ export async function isActiveWorkBoundToRequest(
   ) {
     return false;
   }
-  await readWorkItemMeta(rootDir, pointer.workId);
+  requireSelectableWork(await readWorkItemMeta(rootDir, pointer.workId));
   return true;
 }
 
@@ -571,7 +602,7 @@ export async function activeGedPaths(
       "missing-pointer",
     );
   }
-  await readWorkItemMeta(rootDir, pointer.workId);
+  requireSelectableWork(await readWorkItemMeta(rootDir, pointer.workId));
   return gedPathsForWorkId(rootDir, pointer.workId);
 }
 

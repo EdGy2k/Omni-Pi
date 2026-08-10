@@ -8,7 +8,9 @@ import {
 } from "node:fs";
 import {
   chmod,
+  link,
   mkdir,
+  open,
   rename,
   stat,
   unlink,
@@ -68,6 +70,57 @@ export async function writeFileAtomic(
       /* temp may not exist */
     }
     throw error;
+  }
+}
+
+/**
+ * Atomically publishes a fully-written file without replacing an existing
+ * destination. The sibling temporary file is fsynced before an exclusive
+ * hard-link publication, so concurrent processes can safely converge on one
+ * immutable record.
+ */
+export async function publishFileExclusive(
+  filePath: string,
+  content: string | Uint8Array,
+): Promise<boolean> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = tempPathFor(filePath);
+  const handle = await open(tempPath, "wx");
+  try {
+    await handle.writeFile(content);
+    await handle.sync();
+    await handle.close();
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await unlink(tempPath).catch(() => {});
+    throw error;
+  }
+
+  try {
+    await link(tempPath, filePath);
+    try {
+      const directory = await open(path.dirname(filePath), "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    } catch {
+      // Some platforms/filesystems do not support directory fsync. The
+      // exclusive hard-link publication remains atomic on those platforms.
+    }
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "EEXIST"
+    ) {
+      return false;
+    }
+    throw error;
+  } finally {
+    await unlink(tempPath).catch(() => {});
   }
 }
 

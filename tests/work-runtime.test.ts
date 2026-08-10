@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -7,6 +7,7 @@ import {
   activeGedPaths,
   isActiveWorkBoundToRequest,
 } from "../src/ged-paths.js";
+import { initializeGovernanceState } from "../src/governance-store.js";
 import { registerGedWorkRuntime } from "../src/work-runtime.js";
 
 type Handler = (event: Record<string, unknown>, ctx: TestContext) => unknown;
@@ -296,6 +297,111 @@ describe("Ged work runtime", () => {
     ).rejects.toThrow("summary");
     expect((await activeGedPaths(rootDir, "session-a")).workId).toBe(
       before.workId,
+    );
+  });
+
+  it("blocks mutation when authoritative governance is paused", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-work-paused-"));
+    const ctx: TestContext = {
+      cwd: rootDir,
+      sessionManager: { getSessionId: () => "session-a" },
+    };
+    const runtime = runtimeHarness(["request-a"]);
+    await runtime.emit("session_start", { type: "session_start" }, ctx);
+    await runtime.emit(
+      "before_agent_start",
+      { type: "before_agent_start", systemPrompt: "base" },
+      ctx,
+    );
+    const opened = await runtime.tool.execute(
+      "tool-a",
+      { action: "open", summary: "Paused task" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const workId = opened.details?.workId as string;
+    await initializeGovernanceState(rootDir, workId, {
+      decision: {
+        mode: "planned-change",
+        reasonCode: "decision-needed",
+        reason: "Migration review is required.",
+        requiresDecision: true,
+      },
+      executionProfile: "solo",
+      lifecycle: "paused",
+      evidence: [
+        {
+          id: "migration-required",
+          kind: "migration-required",
+          source: "runtime",
+          recordedAt: "2026-08-10T08:30:00.000Z",
+          summary: "Legacy evidence is not authorization.",
+          outcome: "failed",
+        },
+      ],
+    });
+
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          { type: "tool_call", toolName: "edit", input: { path: "src/a.ts" } },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("lifecycle paused"),
+    });
+  });
+
+  it("migrates legacy checkpoints before runtime bootstrap selection", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-work-migrate-"));
+    const runtimeDir = path.join(rootDir, ".ged", "runtime", "main");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(
+      path.join(runtimeDir, "checkpoints.json"),
+      `${JSON.stringify({
+        schemaVersion: 3,
+        lifecycleStatus: "active",
+        classification: "non-trivial",
+        classificationReason: "Legacy runtime task",
+        planCheckpoints: {},
+        taskCheckpoints: {},
+      })}\n`,
+    );
+    const ctx: TestContext = {
+      cwd: rootDir,
+      sessionManager: { getSessionId: () => "session-a" },
+    };
+    const runtime = runtimeHarness(["request-a"]);
+
+    await runtime.emit("session_start", { type: "session_start" }, ctx);
+    const plan = JSON.parse(
+      await readFile(
+        path.join(
+          rootDir,
+          ".ged",
+          "runtime",
+          "migrations",
+          "legacy-checkpoints-v1",
+          "PLAN.json",
+        ),
+        "utf8",
+      ),
+    ) as { targetWorkId: string };
+    expect((await activeGedPaths(rootDir, "session-a")).workId).not.toBe(
+      plan.targetWorkId,
+    );
+
+    await runtime.emit(
+      "before_agent_start",
+      { type: "before_agent_start", systemPrompt: "base" },
+      ctx,
+    );
+    expect((await activeGedPaths(rootDir, "session-a")).workId).not.toBe(
+      plan.targetWorkId,
     );
   });
 });

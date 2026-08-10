@@ -294,4 +294,21 @@ describe("active Ged work selection", () => {
       opened.workId,
     );
   });
+
+  it("preserves forward-compatible generated work metadata fields", async () => {
+    const rootDir = await tempProject("ged-path-meta-forward-");
+    const opened = await openGedWork(
+      rootDir,
+      request("session-a", "request-1"),
+      "Forward metadata",
+    );
+    await writeFile(
+      opened.paths.metaPath,
+      `${JSON.stringify({ ...opened.meta, futureDisplayHint: "kept" })}\n`,
+    );
+
+    await expect(
+      readWorkItemMeta(rootDir, opened.workId),
+    ).resolves.toMatchObject({ workId: opened.workId });
+  });
 });

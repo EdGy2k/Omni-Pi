@@ -9,7 +9,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — slice 3 complete; legacy migration next
+- **Status**: IN PROGRESS — slice 4 verified; guard migration next
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: HIGH
@@ -159,9 +159,9 @@ summarize naturally. Document governance versus execution as orthogonal planes.
 
 ## Done criteria
 
-- [ ] Work mode, ambiguity, risk, execution profile, and lifecycle are typed once.
-- [ ] Every work item has a unique ID independent of branch.
-- [ ] Legacy state is non-authorizing and recoverable.
+- [x] Work mode, ambiguity, risk, execution profile, and lifecycle are typed once.
+- [x] Every work item has a unique ID independent of branch.
+- [x] Legacy state is non-authorizing and recoverable.
 - [ ] Governance remains active when subagents are off.
 - [ ] Commits do not implicitly close work.
 - [ ] No exact visible `grill-me:` syntax is required.

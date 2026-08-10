@@ -46,3 +46,15 @@
     stale prior-turn evidence non-authorizing.
   - Impact: Branch and HEAD are metadata only. Legacy branch/root state is not
     selected implicitly; it remains untouched until explicit migration.
+
+- Date: 2026-08-10
+  - Decision: Migrate legacy v2/v3 checkpoint layouts through an ignored,
+    immutable phase journal and byte-exact backup before importing at most one
+    unambiguously active candidate.
+  - Why: Legacy branch/root identity is lossy and legacy role records must not
+    become current authorization. Exclusive phase publication gives
+    cross-process crash recovery without stale-lock stealing.
+  - Impact: Supported imports are generated as non-selectable paused work with
+    failed `migration-required` evidence. Ambiguous, corrupt, unsupported, or
+    inactive records are backed up but never imported; sources are never
+    moved, rewritten, or trusted as approval.

@@ -13,6 +13,7 @@ import {
   ensureActiveGedWork,
   relativeGedPath,
 } from "./ged-paths.js";
+import { ensureLegacyCheckpointMigration } from "./legacy-migration.js";
 import { listStarterFiles } from "./memory.js";
 import {
   createInitialSpec,
@@ -413,6 +414,7 @@ export async function initializeGedProject(
   rootDir: string,
   options: InitializeGedOptions = {},
 ): Promise<InitResult> {
+  await ensureLegacyCheckpointMigration(rootDir);
   const created: string[] = [];
   const reused: string[] = [];
 
@@ -547,6 +549,7 @@ export async function ensureGedProjectCurrent(
   rootDir: string,
   options: InitializeGedOptions = {},
 ): Promise<EnsureCurrentGedResult> {
+  await ensureLegacyCheckpointMigration(rootDir);
   await ensureActiveGedWork(rootDir);
   const paths = await activeGedPaths(rootDir);
   const currentVersion = await readGedVersion(rootDir);

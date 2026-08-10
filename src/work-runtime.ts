@@ -13,6 +13,8 @@ import {
   setActiveWorkSession,
   type WorkRequestIdentity,
 } from "./ged-paths.js";
+import { governanceMutationBlockReason } from "./governance-store.js";
+import { ensureLegacyCheckpointMigration } from "./legacy-migration.js";
 import { isGitCommitCommand } from "./orchestration.js";
 
 interface ActiveRequest extends WorkRequestIdentity {
@@ -61,6 +63,7 @@ export function registerGedWorkRuntime(
     const sessionId = ctx.sessionManager.getSessionId();
     setActiveWorkSession(ctx.cwd, sessionId);
     activeRequest = undefined;
+    await ensureLegacyCheckpointMigration(ctx.cwd);
     await ensureActiveGedWork(ctx.cwd, sessionId);
   });
 
@@ -74,6 +77,7 @@ export function registerGedWorkRuntime(
     activeRequest = undefined;
     const sessionId = ctx.sessionManager.getSessionId();
     setActiveWorkSession(ctx.cwd, sessionId);
+    await ensureLegacyCheckpointMigration(ctx.cwd);
     const pointer = await ensureActiveGedWork(ctx.cwd, sessionId);
     activeRequest = {
       cwd: ctx.cwd,
@@ -106,7 +110,8 @@ export function registerGedWorkRuntime(
     if (
       !activeRequest ||
       activeRequest.cwd !== ctx.cwd ||
-      activeRequest.sessionId !== sessionId
+      activeRequest.sessionId !== sessionId ||
+      !activeRequest.workId
     ) {
       return { block: true, reason: bindingBlockReason() };
     }
@@ -122,6 +127,13 @@ export function registerGedWorkRuntime(
         ))
       ) {
         return { block: true, reason: bindingBlockReason() };
+      }
+      const governanceReason = await governanceMutationBlockReason(
+        ctx.cwd,
+        activeRequest.workId,
+      );
+      if (governanceReason) {
+        return { block: true, reason: `GedPi work guard: ${governanceReason}` };
       }
     } catch (error) {
       return {

@@ -1,33 +1,37 @@
-# Spec: Task-scoped governance kernel — slice 3
+# Spec: Task-scoped governance kernel — slice 4
 
 ## Goal
 
-Add one authoritative, versioned structured governance record per generated
-work item with process-local serialization, monotonic revisions, stale-write
-rejection, lossless concurrent evidence appends, and deterministic Markdown
-projection regeneration.
+Quarantine legacy branch/root checkpoint state and, only when activity is
+unambiguous, import one record as paused, non-selectable task-scoped work.
 
 ## Scope
 
-- Define the canonical work-state, approval, and role-neutral evidence types.
-- Store authoritative state at `.ged/runtime/<work-id>/governance.json`.
-- Add strict parsing, initialization, compare-and-swap update, and serialized
-  evidence append operations.
-- Write structured state before projections and allow deterministic projection
-  regeneration after interruption.
-- Keep existing checkpoint guards and legacy migration unchanged in this slice.
+- Discover legacy v2/v3 root and branch checkpoint layouts without following
+  symlinks or treating Markdown as state.
+- Publish a strict immutable migration plan, byte-exact backup, and monotonic
+  phase markers under ignored runtime storage.
+- Import only one clearly active candidate; never import ambiguous, corrupt,
+  unsupported, or inactive candidates.
+- Make imported work non-selectable and initialize paused authoritative state
+  with non-authorizing `migration-required` evidence.
+- Run migration before bootstrap work selection and current-version checks.
 
 ## Non-goals
 
-- Do not import legacy checkpoint records, authorize mutation from the new
-  state, or remove checkpoint compatibility yet.
-- Do not add cross-process lock stealing or content/Git snapshot digests.
-- Do not make Markdown authoritative.
+- Do not migrate legacy approvals, role checkpoints, or branch identity as
+  authority.
+- Do not delete or rewrite legacy source files.
+- Do not add stale-lock recovery, select imported work, or migrate the
+  remaining legacy guards in this slice.
 
 ## Acceptance
 
-- Revisions start at zero and increase exactly once per accepted mutation.
-- Stale expected revisions are rejected without changing state.
-- Concurrent evidence appends retain every unique record.
-- Corrupt or unknown schemas fail closed.
-- Projection loss does not affect structured state and can be regenerated.
+- Every discovered safe source is backed up byte-for-byte before any import.
+- Only one valid active v2/v3 candidate can be imported, and only when every
+  other candidate is valid and inactive.
+- Imported work is paused, non-selectable, and contains failed
+  `migration-required` evidence rather than legacy authorization.
+- Repeated and interrupted runs converge on one backup, work ID, and evidence
+  ID without overwriting conflicting artifacts.
+- Corrupt journals and unsafe layouts fail closed before bootstrap selection.

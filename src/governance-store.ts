@@ -17,6 +17,7 @@ import {
   type GovernanceWorkState,
   WORK_LIFECYCLES,
   WORK_MODES,
+  type WorkLifecycle,
 } from "./governance.js";
 import { withProcessQueue } from "./serial-queue.js";
 
@@ -69,6 +70,8 @@ export interface InitializeGovernanceStateInput {
   decision: GovernanceDecision;
   executionProfile: ExecutionProfile;
   currentSlice?: string | null;
+  lifecycle?: WorkLifecycle;
+  evidence?: GovernanceEvidence[];
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -296,6 +299,37 @@ export async function readGovernanceState(
   }
 }
 
+/** Returns a fail-closed mutation denial when authoritative state exists. */
+export async function governanceMutationBlockReason(
+  rootDir: string,
+  workId: string,
+): Promise<string | null> {
+  let state: GovernanceWorkState;
+  try {
+    state = await readGovernanceState(rootDir, workId);
+  } catch (error) {
+    if (error instanceof GovernanceStoreError && error.code === "missing") {
+      // Existing generated work predates governance initialization. Remaining
+      // legacy guard migration is a later slice; do not silently reinterpret it
+      // here.
+      return null;
+    }
+    throw error;
+  }
+  if (state.lifecycle !== "active") {
+    return `Ged work ${workId} has lifecycle ${state.lifecycle}; only active work can authorize mutation.`;
+  }
+  if (
+    state.evidence.some(
+      (entry) =>
+        entry.kind === "migration-required" && entry.outcome === "failed",
+    )
+  ) {
+    return `Ged work ${workId} requires legacy migration review and cannot authorize mutation.`;
+  }
+  return null;
+}
+
 async function writeStructuredState(
   rootDir: string,
   expectedWorkId: string,
@@ -400,8 +434,8 @@ export async function initializeGovernanceState(
       decision: input.decision,
       executionProfile: input.executionProfile,
       approvals: [],
-      evidence: [],
-      lifecycle: "active",
+      evidence: input.evidence ?? [],
+      lifecycle: input.lifecycle ?? "active",
     });
     await writeStructuredState(rootDir, workId, state);
     await writeProjectionFromState(rootDir, state);
