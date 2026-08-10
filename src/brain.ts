@@ -10,7 +10,11 @@ import {
   buildPlanReviewWorkflowPrompt,
 } from "./commit-settings.js";
 import type { GedState } from "./contracts.js";
-import { activeGedPaths, currentWorkId, relativeGedPath } from "./ged-paths.js";
+import {
+  activeGedPaths,
+  currentBranchName,
+  relativeGedPath,
+} from "./ged-paths.js";
 import { buildOrchestrationPrompt } from "./orchestration.js";
 import { ensurePiSettings } from "./theme.js";
 import type {
@@ -79,26 +83,26 @@ Behavior rules:
 
 // ─── Branch hygiene nudge ──────────────────────────────────────────────
 
-export const TRUNK_BRANCHES = new Set(["main", "master", "root"]);
+export const TRUNK_BRANCHES = new Set(["main", "master"]);
 
-export function buildBranchNudge(workId: string): string {
-  if (!TRUNK_BRANCHES.has(workId)) return "";
-
-  if (workId === "root") {
+export function buildBranchNudge(branchName: string | null): string {
+  if (branchName === null) {
     return `## ⚠️ Branch Hygiene
 
-No named Git branch was detected, so GedPi is using the \`root\` work namespace.
-Work tracking is less reliable here because unrelated detached/non-branch work can share
-\`.ged/work/root/\`. Before making substantial changes, strongly suggest to the user:
+No named Git branch was detected. GedPi work identity remains task-scoped and independent
+of Git, but a descriptive feature branch still makes repository history easier to review.
+Before making substantial changes, suggest to the user:
 
     git checkout -b <descriptive-branch-name>`;
   }
 
+  if (!TRUNK_BRANCHES.has(branchName)) return "";
+
   return `## ⚠️ Branch Hygiene
 
-You are on the \`${workId}\` branch. GedPi strongly recommends working in a feature branch
-so each piece of work gets a dedicated \`.ged/work/<branch>/\` namespace and the trunk
-stays clean. Before making substantial changes, suggest to the user:
+You are on the \`${branchName}\` branch. GedPi strongly recommends working in a feature branch
+so repository history stays reviewable; GedPi work identity remains independent of the
+branch name. Before making substantial changes, suggest to the user:
 
     git checkout -b <descriptive-branch-name>`;
 }
@@ -284,8 +288,8 @@ export async function buildBrainSystemPromptSuffix(
   cwd: string,
   options: { homeDir?: string } = {},
 ): Promise<string> {
-  const workId = await currentWorkId(cwd);
-  const branchNudge = buildBranchNudge(workId);
+  const branch = await currentBranchName(cwd);
+  const branchNudge = buildBranchNudge(branch);
   const passive = await buildPassiveGedPromptSuffix(cwd);
   const workflow = await buildWorkflowPromptSuffix(cwd, options);
   return [branchNudge, passive, workflow].filter(Boolean).join("\n\n");

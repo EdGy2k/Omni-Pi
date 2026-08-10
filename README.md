@@ -210,7 +210,10 @@ These files describe the project as it is now. They evolve slowly and persist ac
 
 ### Work — active implementation contracts
 
-Scoped per-branch under `.ged/work/<work-id>/`. The work-id is the sanitized git branch name, or `root` when no branch exists. Each branch gets its own isolated planning namespace.
+Scoped per work item under `.ged/work/<work-id>/`. Work IDs combine a readable
+summary slug, sortable timestamp, and cryptographic entropy; Git branch names
+are metadata only. Each Pi session keeps an ignored active-work pointer, and
+each new agent request must explicitly open or continue work before mutation.
 
 ```
 .ged/work/<work-id>/
@@ -223,7 +226,10 @@ Scoped per-branch under `.ged/work/<work-id>/`. The work-id is the sanitized git
 
 ### Runtime — session state
 
-Per-branch, ephemeral. Tracks current phase, session handoff, and checkpoint state. The checkpoint file enforces the subagent workflow.
+Per work item, ephemeral. Tracks current phase, session handoff, and checkpoint
+state. Session-scoped pointers live under
+`.ged/runtime/active-work/<session-key>.json` and are ignored with the rest of
+runtime state.
 
 ```
 .ged/runtime/<work-id>/

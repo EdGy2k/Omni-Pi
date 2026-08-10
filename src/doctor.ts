@@ -30,8 +30,13 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 async function checkGedInitialized(rootDir: string): Promise<DiagnosticResult> {
-  const paths = await activeGedPaths(rootDir);
-  const stateExists = await fileExists(paths.statePath);
+  let stateExists = false;
+  try {
+    const paths = await activeGedPaths(rootDir);
+    stateExists = await fileExists(paths.statePath);
+  } catch {
+    stateExists = false;
+  }
   if (!stateExists) {
     return {
       name: "ged-init",

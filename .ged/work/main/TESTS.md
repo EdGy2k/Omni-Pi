@@ -1,8 +1,8 @@
-# Tests: Task-scoped governance kernel — slice 1
+# Tests: Task-scoped governance kernel — slice 2
 
 ## Focused
 
-- `npm test -- tests/governance.test.ts`
+- `npm test -- tests/ged-paths.test.ts tests/work-runtime.test.ts tests/workflow.test.ts tests/orchestration.test.ts tests/brain.test.ts tests/runtime.test.ts`
 - `npm run check`
 - `npm run lint`
 
@@ -13,10 +13,11 @@
 
 ## Scenario acceptance
 
-- Read-only intent wins regardless of breadth or risk.
-- Clear bounded reversible changes with deterministic verification resolve
-  direct-change even when two files are involved.
-- High-risk auth, migration, and release changes resolve planned-change.
-- Unresolved UI decisions block mutation under planned-change.
-- Explicit read-only/planned user constraints are preserved.
-- Coordinator escalation may raise direct-change to planned-change.
+- Generated IDs remain distinct for concurrent opens and sanitizer collisions.
+- Active paths are pointer-selected, not branch-selected.
+- Session A selection does not alter session B selection.
+- Branch rename, detached HEAD, and non-Git projects retain immutable IDs.
+- Corrupt/traversal pointers and missing continue targets fail closed.
+- A new `before_agent_start` request cannot use the previous request binding.
+- `ged_work` must run in a separate tool batch before write/edit/commit is
+  accepted.

@@ -8,8 +8,12 @@ import type {
   SkillCandidate,
 } from "./contracts.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
-import { activeGedPaths, relativeGedPath } from "./ged-paths.js";
-import { buildStarterFileMap, listStarterFiles } from "./memory.js";
+import {
+  activeGedPaths,
+  ensureActiveGedWork,
+  relativeGedPath,
+} from "./ged-paths.js";
+import { listStarterFiles } from "./memory.js";
 import {
   createInitialSpec,
   gatherPlanningContext,
@@ -44,6 +48,11 @@ import {
   writeGedVersion,
 } from "./standards.js";
 import { type SyncRequest, syncGedMemory } from "./sync.js";
+import {
+  DEFAULT_WORK_SPEC,
+  DEFAULT_WORK_TASKS,
+  DEFAULT_WORK_TESTS,
+} from "./templates.js";
 import { executeNextTask, type WorkEngine, type WorkResult } from "./work.js";
 
 export interface InitResult {
@@ -89,8 +98,6 @@ export interface WorkExecutionResult extends WorkResult {
 export interface SyncResult {
   state: GedState;
 }
-
-const starterFileMap = buildStarterFileMap();
 
 async function writeIfMissing(
   filePath: string,
@@ -418,6 +425,8 @@ export async function initializeGedProject(
     }
   }
 
+  await ensureActiveGedWork(rootDir);
+
   const repoSignals = await detectRepoSignals(rootDir);
   const skillCandidates = buildSkillCandidates(repoSignals);
   const {
@@ -538,6 +547,7 @@ export async function ensureGedProjectCurrent(
   rootDir: string,
   options: InitializeGedOptions = {},
 ): Promise<EnsureCurrentGedResult> {
+  await ensureActiveGedWork(rootDir);
   const paths = await activeGedPaths(rootDir);
   const currentVersion = await readGedVersion(rootDir);
   const needsInit = !(await readOptionalText(paths.statePath));
@@ -568,18 +578,9 @@ export async function planGedProject(
   const paths = await activeGedPaths(rootDir);
   const { specPath, tasksPath, testsPath } = paths;
 
-  await writeIfMissing(
-    specPath,
-    starterFileMap[".ged/work/root/SPEC.md"] ?? "# Spec\n",
-  );
-  await writeIfMissing(
-    tasksPath,
-    starterFileMap[".ged/work/root/TASKS.md"] ?? "# Tasks\n",
-  );
-  await writeIfMissing(
-    testsPath,
-    starterFileMap[".ged/work/root/TESTS.md"] ?? "# Tests\n",
-  );
+  await writeIfMissing(specPath, DEFAULT_WORK_SPEC);
+  await writeIfMissing(tasksPath, DEFAULT_WORK_TASKS);
+  await writeIfMissing(testsPath, DEFAULT_WORK_TESTS);
   await writeIfMissing(paths.notesPath, "# Notes\n\n");
   await writeIfMissing(
     paths.metaPath,

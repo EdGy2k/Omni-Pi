@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Features
+
+- Replaced branch-derived work selection with immutable generated work IDs,
+  ignored session-scoped active-work pointers, and an explicit `ged_work`
+  open/continue transition. Every new Pi agent request now receives a fresh
+  binding, so stale prior-request selection cannot authorize write, edit, or
+  commit tools.
+
 ### Dependencies
 
 - Updated the aligned Pi runtime (including agent-core) and compatibility aliases to 0.84.1,
@@ -10,6 +18,7 @@
   including deterministic foreground/wait completion handling.
 - Added compatible transitive security overrides for `brace-expansion`,
   `nanoid`, `postcss`, and `undici`, clearing all reported npm audit findings.
+- Added a direct `typebox` dependency for the public Pi custom-tool schema API.
 
 ### Fixes
 

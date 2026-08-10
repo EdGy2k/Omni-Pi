@@ -50,6 +50,7 @@ import {
 import { ensurePiSettings, formatGedStatus } from "../../src/theme.js";
 import { registerUpdater } from "../../src/updater.js";
 import type { CheckpointAgent } from "../../src/vendor/shared-checkpoints.js";
+import { registerGedWorkRuntime } from "../../src/work-runtime.js";
 import { buildOnboardingInterviewKickoff } from "../../src/workflow.js";
 import { registerGhostlightUi } from "./ghostlight-ui.js";
 
@@ -475,6 +476,8 @@ function subagentForegroundCompletionRecords(
 export default async function gedCoreExtension(
   api: ExtensionAPI,
 ): Promise<void> {
+  registerGedWorkRuntime(api);
+
   // Reset touched files on session start
   api.on("session_start", (_event, ctx) => {
     activeCwd = ctx.cwd;

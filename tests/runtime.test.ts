@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 import { describe, expect, test } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
 import packageLock from "../package-lock.json" with { type: "json" };
+import { activeGedPaths } from "../src/ged-paths.js";
 import { prepareNextTaskDispatch } from "../src/work.js";
 import { initializeGedProject, planGedProject } from "../src/workflow.js";
 
@@ -44,6 +45,7 @@ describe("Ged runtime flow", () => {
     expect(packageJson.dependencies).toMatchObject({
       "pi-subagents": "0.45.1",
       "pi-intercom": "0.10.0",
+      typebox: "1.3.7",
       "@earendil-works/pi-agent-core": "0.84.1",
       "@mariozechner/pi-coding-agent":
         "npm:@earendil-works/pi-coding-agent@0.84.1",
@@ -80,6 +82,9 @@ describe("Ged runtime flow", () => {
     expect(
       packageLock.packages["node_modules/@earendil-works/pi-agent-core"],
     ).toMatchObject({ version: "0.84.1" });
+    expect(packageLock.packages["node_modules/typebox"]).toMatchObject({
+      version: "1.3.7",
+    });
   });
 
   test("configured Pi extension paths exist", async () => {
@@ -119,10 +124,8 @@ describe("Ged runtime flow", () => {
     });
 
     const dispatch = await prepareNextTaskDispatch(rootDir);
-    const tasks = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const tasks = await readFile(paths.tasksPath, "utf8");
 
     expect(dispatch.kind).toBe("ready");
     expect(dispatch.taskId).toBe("T01");

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeFileAtomic } from "../src/atomic.js";
 import { buildWorkflowPromptSuffix } from "../src/brain.js";
+import { activeGedPaths, ensureActiveGedWork } from "../src/ged-paths.js";
 import {
   buildOrchestrationPrompt,
   closeCheckpointState,
@@ -149,10 +150,12 @@ describe("checkpoint types", () => {
 
 describe("checkpoint state management", () => {
   let tmpDir: string;
+  let checkpointPath: string;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "ged-orch-"));
-    await mkdir(path.join(tmpDir, ".ged", "runtime"), { recursive: true });
+    await ensureActiveGedWork(tmpDir);
+    checkpointPath = (await activeGedPaths(tmpDir)).checkpointsPath;
   });
 
   afterEach(async () => {
@@ -166,7 +169,7 @@ describe("checkpoint state management", () => {
 
   it("returns null for malformed checkpoint JSON", async () => {
     await writeFileAtomic(
-      path.join(tmpDir, ".ged", "runtime", "checkpoints.json"),
+      checkpointPath,
       '{"schemaVersion":2,"classification":"invalid-value"}',
     );
     const state = await readCheckpointState(tmpDir);
@@ -175,7 +178,7 @@ describe("checkpoint state management", () => {
 
   it("returns null for legacy v1 schema", async () => {
     await writeFileAtomic(
-      path.join(tmpDir, ".ged", "runtime", "checkpoints.json"),
+      checkpointPath,
       JSON.stringify({
         classification: "non-trivial",
         classificationReason: "v1",
@@ -188,10 +191,7 @@ describe("checkpoint state management", () => {
   });
 
   it("returns null for non-object checkpoint JSON", async () => {
-    await writeFileAtomic(
-      path.join(tmpDir, ".ged", "runtime", "checkpoints.json"),
-      '"just a string"',
-    );
+    await writeFileAtomic(checkpointPath, '"just a string"');
     const state = await readCheckpointState(tmpDir);
     expect(state).toBeNull();
   });
@@ -214,11 +214,8 @@ describe("checkpoint state management", () => {
   });
 
   it("normalizes v2 checkpoints without lifecycle to active v3", async () => {
-    await mkdir(path.join(tmpDir, ".ged", "runtime", "root"), {
-      recursive: true,
-    });
     await writeFileAtomic(
-      path.join(tmpDir, ".ged", "runtime", "root", "checkpoints.json"),
+      checkpointPath,
       `${JSON.stringify({
         schemaVersion: 2,
         classification: "trivial",
@@ -1239,19 +1236,17 @@ describe("brain orchestration integration", () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "ged-brain-orch-"));
-    await mkdir(path.join(tmpDir, ".ged"), { recursive: true });
+    await ensureActiveGedWork(tmpDir);
+    const paths = await activeGedPaths(tmpDir);
     await writeFileAtomic(
-      path.join(tmpDir, ".ged", "STATE.md"),
+      paths.statePath,
       "Current phase: plan\nActive task: T01\nStatus summary: planning\nBlockers: None\nNext step: implement\n",
     );
     await writeFileAtomic(
-      path.join(tmpDir, ".ged", "TASKS.md"),
+      paths.tasksPath,
       "| ID | Title |\n|---|---|\n| T01 | Test |\n",
     );
-    await writeFileAtomic(
-      path.join(tmpDir, ".ged", "TESTS.md"),
-      "## Checks\n- npm test\n",
-    );
+    await writeFileAtomic(paths.testsPath, "## Checks\n- npm test\n");
   });
 
   afterEach(async () => {
@@ -1318,7 +1313,7 @@ describe("orchestration integration", () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(path.join(os.tmpdir(), "ged-orch-int-"));
-    await mkdir(path.join(tmpDir, ".ged", "runtime"), { recursive: true });
+    await ensureActiveGedWork(tmpDir);
   });
 
   afterEach(async () => {

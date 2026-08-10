@@ -5,6 +5,50 @@ export interface StarterFile {
   content: string;
 }
 
+export const DEFAULT_WORK_SPEC = `# Spec
+
+## Problem
+
+## Solution shape
+
+## Key workflows
+
+## Risks
+
+## Open questions
+`;
+
+export const DEFAULT_WORK_TASKS = `# Tasks
+
+## Task slices
+
+| ID | Title | Depends On | Status | Done Criteria |
+| --- | --- | --- | --- | --- |
+`;
+
+export const DEFAULT_WORK_TESTS = `# Tests
+
+## Project-wide checks
+
+-
+
+## Task-specific checks
+
+-
+
+## Retry policy
+
+- Implementation retries before the plan must be tightened: 2
+
+## Recovery rule
+
+- If the same slice fails repeatedly, rewrite the slice, clarify the spec, and retry with a narrower plan.
+`;
+
+export const DEFAULT_WORK_NOTES = `# Notes
+
+`;
+
 export const starterFiles: StarterFile[] = [
   {
     path: `${GED_DIR}/VERSION`,
@@ -15,7 +59,7 @@ export const starterFiles: StarterFile[] = [
     path: `${GED_DIR}/CONTEXT-MAP.md`,
     content: `# Context Map
 
-Ged memory is current-state oriented. Durable root files describe the project as it is now; active work and runtime state live under branch/work scoped directories.
+Ged memory is current-state oriented. Durable root files describe the project as it is now; active work and runtime state are scoped by immutable work-item IDs rather than branches.
 
 ## Durable root memory
 
@@ -37,6 +81,7 @@ Ged memory is current-state oriented. Durable root files describe the project as
 
 ## Runtime memory
 
+- \`.ged/runtime/active-work/<session-key>.json\` (ignored session selection)
 - \`.ged/runtime/<work-id>/STATE.md\`
 - \`.ged/runtime/<work-id>/SESSION-SUMMARY.md\`
 - \`.ged/runtime/<work-id>/checkpoints.json\`
@@ -162,66 +207,6 @@ Store project-scoped skills that Ged auto-installs or creates for active tasks h
     path: `${GED_DIR}/SKILLS-STATE.json`,
     content: `{
   "managed": []
-}
-`,
-  },
-  {
-    path: `${GED_DIR}/work/root/SPEC.md`,
-    content: `# Spec
-
-## Problem
-
-## Solution shape
-
-## Key workflows
-
-## Risks
-
-## Open questions
-`,
-  },
-  {
-    path: `${GED_DIR}/work/root/TASKS.md`,
-    content: `# Tasks
-
-## Task slices
-
-| ID | Title | Depends On | Status | Done Criteria |
-| --- | --- | --- | --- | --- |
-`,
-  },
-  {
-    path: `${GED_DIR}/work/root/TESTS.md`,
-    content: `# Tests
-
-## Project-wide checks
-
--
-
-## Task-specific checks
-
--
-
-## Retry policy
-
-- Implementation retries before the plan must be tightened: 2
-
-## Recovery rule
-
-- If the same slice fails repeatedly, rewrite the slice, clarify the spec, and retry with a narrower plan.
-`,
-  },
-  {
-    path: `${GED_DIR}/work/root/NOTES.md`,
-    content: `# Notes
-
-`,
-  },
-  {
-    path: `${GED_DIR}/work/root/META.json`,
-    content: `{
-  "workId": "root",
-  "schema": 1
 }
 `,
   },

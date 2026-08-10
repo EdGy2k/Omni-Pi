@@ -16,6 +16,7 @@ import {
 } from "../src/context.js";
 import { detectPreset } from "../src/contracts.js";
 import { detectStuck, renderDoctorReport, runDoctor } from "../src/doctor.js";
+import { activeGedPaths, relativeGedPath } from "../src/ged-paths.js";
 import {
   buildBranchName,
   buildCommitMessage,
@@ -66,10 +67,11 @@ describe("Ged workflow", () => {
     const rootDir = await createTempProject("ged-init-");
 
     const result = await initializeGedProject(rootDir);
+    const paths = await activeGedPaths(rootDir);
 
     expect(result.created).toContain(".ged/VERSION");
     expect(result.created).toContain(".ged/PROJECT.md");
-    expect(result.created).toContain(".ged/runtime/root/STATE.md");
+    expect(result.created).toContain(relativeGedPath(rootDir, paths.statePath));
     expect(result.created).toContain(".pi/agents/ged-brain.md");
     expect(
       result.skillCandidates.some(
@@ -346,10 +348,8 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     };
 
     const result = await workOnGedProject(rootDir, engine);
-    const tasks = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const tasks = await readFile(paths.tasksPath, "utf8");
 
     expect(result.kind).toBe("completed");
     expect(result.message).toContain("Verification passed: npm test");
@@ -424,10 +424,8 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
 
     const firstResult = await workOnGedProject(rootDir, engine);
     const secondResult = await workOnGedProject(rootDir, engine);
-    const tasks = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const tasks = await readFile(paths.tasksPath, "utf8");
     const recovery = await readFile(
       path.join(rootDir, ".ged", "tasks", "T01-RECOVERY.md"),
       "utf8",
@@ -524,10 +522,8 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const spec = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "SPEC.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const spec = await readFile(paths.specPath, "utf8");
     expect(spec).toContain("Use server components");
   });
 
@@ -564,18 +560,10 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const spec = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "SPEC.md"),
-      "utf8",
-    );
-    const tasks = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
-      "utf8",
-    );
-    const sessionSummary = await readFile(
-      path.join(rootDir, ".ged", "runtime", "root", "SESSION-SUMMARY.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const spec = await readFile(paths.specPath, "utf8");
+    const tasks = await readFile(paths.tasksPath, "utf8");
+    const sessionSummary = await readFile(paths.sessionSummaryPath, "utf8");
     const plans = await readPlanIndex(rootDir);
 
     expect(spec).toContain("Webhook reliability");
@@ -624,14 +612,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const tasks = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
-      "utf8",
-    );
-    const sessionSummary = await readFile(
-      path.join(rootDir, ".ged", "runtime", "root", "SESSION-SUMMARY.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const tasks = await readFile(paths.tasksPath, "utf8");
+    const sessionSummary = await readFile(paths.sessionSummaryPath, "utf8");
 
     expect(tasks).toContain(
       "| T01 | Lock the exact user requirements | - | done |",
@@ -659,12 +642,13 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
   test("ensureTaskSkillDependencies installs bundled skills project-scope", async () => {
     const rootDir = await createTempProject("ged-skill-deps-");
     await initializeGedProject(rootDir);
+    const paths = await activeGedPaths(rootDir);
 
     const result = await ensureTaskSkillDependencies(rootDir, {
       id: "T01",
       title: "Lock requirements",
       objective: "Refine the implementation-ready spec.",
-      contextFiles: [".ged/work/root/SPEC.md"],
+      contextFiles: [relativeGedPath(rootDir, paths.specPath)],
       skills: ["ged-planning"],
       doneCriteria: ["Requirements are explicit."],
       status: "todo",
@@ -919,10 +903,8 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: ["Primary users: developers"],
     });
 
-    const spec = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "SPEC.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const spec = await readFile(paths.specPath, "utf8");
     expect(spec).toContain("Primary users: developers");
   });
 
@@ -948,14 +930,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       preset: "bugfix",
     });
 
-    const spec = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "SPEC.md"),
-      "utf8",
-    );
-    const tasks = await readFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const spec = await readFile(paths.specPath, "utf8");
+    const tasks = await readFile(paths.tasksPath, "utf8");
 
     expect(spec).toContain("bugfix");
     expect(spec).toContain("root cause");
@@ -1167,8 +1144,11 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     await initializeGedProject(rootDir);
 
     const blocks = await gatherPhaseContext(rootDir, "build", 10000);
+    const paths = await activeGedPaths(rootDir);
     expect(blocks.length).toBeGreaterThan(0);
-    expect(blocks.some((b) => b.file === ".ged/work/root/SPEC.md")).toBe(true);
+    expect(
+      blocks.some((b) => b.file === relativeGedPath(rootDir, paths.specPath)),
+    ).toBe(true);
 
     const totalTokens = blocks.reduce((sum, b) => sum + b.tokens, 0);
     expect(totalTokens).toBeLessThanOrEqual(10000);
@@ -1200,7 +1180,10 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     };
 
     const blocks = await gatherTaskContext(rootDir, task, 10000);
-    expect(blocks.some((b) => b.file === ".ged/work/root/SPEC.md")).toBe(true);
+    const paths = await activeGedPaths(rootDir);
+    expect(
+      blocks.some((b) => b.file === relativeGedPath(rootDir, paths.specPath)),
+    ).toBe(true);
     expect(blocks.some((b) => b.file === ".ged/PROJECT.md")).toBe(true);
   });
 
@@ -1565,8 +1548,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
   test("prepareCommitPlan parses escaped pipes from completed task rows", async () => {
     const rootDir = await createTempProject("ged-commit-plan-pipes-");
     await initializeGedProject(rootDir);
+    const paths = await activeGedPaths(rootDir);
     await writeFile(
-      path.join(rootDir, ".ged", "work", "root", "TASKS.md"),
+      paths.tasksPath,
       `# Tasks
 
 ## Task slices

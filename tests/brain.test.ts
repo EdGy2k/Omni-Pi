@@ -12,6 +12,11 @@ import {
   TRUNK_BRANCHES,
 } from "../src/brain.js";
 import {
+  activeGedPaths,
+  ensureActiveGedWork,
+  relativeGedPath,
+} from "../src/ged-paths.js";
+import {
   initCheckpointState,
   readCheckpointState,
   writeCheckpointState,
@@ -61,10 +66,8 @@ describe("Ged brain runtime", () => {
     const rootDir = await createTempProject("ged-brain-init-");
 
     const result = await ensureGedReady(rootDir);
-    const state = await readFile(
-      path.join(rootDir, ".ged", "runtime", "root", "STATE.md"),
-      "utf8",
-    );
+    const paths = await activeGedPaths(rootDir);
+    const state = await readFile(paths.statePath, "utf8");
 
     expect(result.status).toBe("initialized");
     expect(state).toContain("Run onboarding clarification");
@@ -78,6 +81,7 @@ describe("Ged brain runtime", () => {
     const prompt = await buildBrainSystemPromptSuffix(rootDir, {
       homeDir: testHomeDir,
     });
+    const paths = await activeGedPaths(rootDir);
 
     expect(prompt).toContain("GedPi Single-Brain Mode");
     expect(prompt).toContain("grill-me: needed");
@@ -128,7 +132,7 @@ describe("Ged brain runtime", () => {
     expect(prompt).toContain(
       "treat direct user instructions as requested Ged app/product behavior by default",
     );
-    expect(prompt).toContain(".ged/work/root/TASKS.md");
+    expect(prompt).toContain(relativeGedPath(rootDir, paths.tasksPath));
     expect(prompt).toContain("Run onboarding clarification");
   });
 
@@ -160,12 +164,12 @@ describe("Ged brain runtime", () => {
       expect(nudge).toContain("feature branch");
     });
 
-    test("returns nudge for root work-id", () => {
-      const nudge = buildBranchNudge("root");
+    test("returns nudge without a named Git branch", () => {
+      const nudge = buildBranchNudge(null);
       expect(nudge).toContain("## ⚠️ Branch Hygiene");
       expect(nudge).toContain("No named Git branch");
-      expect(nudge).toContain("`root` work namespace");
-      expect(nudge).not.toContain("feature branch");
+      expect(nudge).toContain("work identity remains task-scoped");
+      expect(nudge).toContain("feature branch");
     });
 
     test("returns empty string for feature branches", () => {
@@ -173,6 +177,7 @@ describe("Ged brain runtime", () => {
       expect(buildBranchNudge("fix-bar")).toBe("");
       expect(buildBranchNudge("chore/update-deps")).toBe("");
       expect(buildBranchNudge("feature/my-cool-thing")).toBe("");
+      expect(buildBranchNudge("root")).toBe("");
     });
 
     test("returns empty string for empty work-id", () => {
@@ -182,8 +187,7 @@ describe("Ged brain runtime", () => {
     test("TRUNK_BRANCHES contains expected values", () => {
       expect(TRUNK_BRANCHES.has("main")).toBe(true);
       expect(TRUNK_BRANCHES.has("master")).toBe(true);
-      expect(TRUNK_BRANCHES.has("root")).toBe(true);
-      expect(TRUNK_BRANCHES.size).toBe(3);
+      expect(TRUNK_BRANCHES.size).toBe(2);
     });
   });
 
@@ -197,7 +201,7 @@ describe("Ged brain runtime", () => {
 
     expect(prompt).toContain("## ⚠️ Branch Hygiene");
     expect(prompt).toContain("No named Git branch");
-    expect(prompt).toContain("`root` work namespace");
+    expect(prompt).toContain("work identity remains task-scoped");
     // Nudge should appear before the passive durable standards section
     const nudgeIndex = prompt.indexOf("## ⚠️ Branch Hygiene");
     const standardsIndex = prompt.indexOf("## Ged Durable Standards");
@@ -273,6 +277,11 @@ describe("Ged brain runtime", () => {
       { type: "session_start" },
       {
         cwd: rootDir,
+        sessionManager: {
+          getSessionId() {
+            return "ged-default-session";
+          },
+        },
         ui: {
           setTitle() {},
           setTheme() {},
@@ -308,6 +317,7 @@ describe("Ged brain runtime", () => {
   test("gedCoreExtension records subagent checkpoints only after completed results", async () => {
     const rootDir = await createTempProject("ged-brain-subagent-results-");
     await enableProjectSubagents(rootDir);
+    await ensureActiveGedWork(rootDir);
     await writeCheckpointState(
       rootDir,
       initCheckpointState("non-trivial", "test subagent result recording"),
@@ -341,6 +351,11 @@ describe("Ged brain runtime", () => {
       { type: "session_start" },
       {
         cwd: rootDir,
+        sessionManager: {
+          getSessionId() {
+            return "ged-default-session";
+          },
+        },
         ui: {
           setTitle() {},
           setTheme() {},
@@ -643,11 +658,10 @@ describe("Ged brain runtime", () => {
   test("gedCoreExtension explorer-first guard gives immediate recovery steps", async () => {
     const rootDir = await createTempProject("ged-brain-guard-");
     await enableProjectSubagents(rootDir);
-    await mkdir(path.join(rootDir, ".ged", "runtime", "root"), {
-      recursive: true,
-    });
+    await ensureActiveGedWork(rootDir);
+    const paths = await activeGedPaths(rootDir);
     await writeFile(
-      path.join(rootDir, ".ged", "runtime", "root", "checkpoints.json"),
+      paths.checkpointsPath,
       JSON.stringify({
         schemaVersion: 3,
         lifecycleStatus: "active",
@@ -709,7 +723,7 @@ describe("Ged brain runtime", () => {
     const gedWrite = await handlers.get("tool_call")?.(
       {
         toolName: "write",
-        input: { path: ".ged/runtime/root/checkpoints.json" },
+        input: { path: relativeGedPath(rootDir, paths.checkpointsPath) },
       },
       { cwd: rootDir },
     );
@@ -727,11 +741,10 @@ describe("Ged brain runtime", () => {
     // Note: subagents NOT enabled (default). A non-trivial checkpoint that would
     // normally block must be ignored entirely so the solo workflow never demands
     // ged-explorer/ged-planner/ged-verifier dispatches.
-    await mkdir(path.join(rootDir, ".ged", "runtime", "root"), {
-      recursive: true,
-    });
+    await ensureActiveGedWork(rootDir);
+    const paths = await activeGedPaths(rootDir);
     await writeFile(
-      path.join(rootDir, ".ged", "runtime", "root", "checkpoints.json"),
+      paths.checkpointsPath,
       JSON.stringify({
         schemaVersion: 3,
         lifecycleStatus: "active",

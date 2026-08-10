@@ -35,3 +35,14 @@
     create immediate migration work.
   - Impact: The dependency slice must reconcile documented API drift and clear
     reachable high-severity npm advisories before governance work proceeds.
+
+- Date: 2026-08-10
+  - Decision: Select immutable work IDs through ignored, session-scoped active
+    pointers and bind mutation to a Ged-generated request nonce created at
+    Pi's public `before_agent_start` boundary.
+  - Why: Pi exposes a stable session ID and request lifecycle but no globally
+    unique request ID. Session-scoped pointers prevent independent sessions
+    from stealing each other's selection, while a fresh request nonce makes
+    stale prior-turn evidence non-authorizing.
+  - Impact: Branch and HEAD are metadata only. Legacy branch/root state is not
+    selected implicitly; it remains untouched until explicit migration.

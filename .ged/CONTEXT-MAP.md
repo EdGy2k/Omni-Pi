@@ -1,6 +1,6 @@
 # Context Map
 
-Ged memory is current-state oriented. Durable root files describe the project as it is now; active work and runtime state live under branch/work scoped directories.
+Ged memory is current-state oriented. Durable root files describe the project as it is now; active work and runtime state are scoped by immutable work-item IDs rather than branches.
 
 ## Durable root memory
 
@@ -22,6 +22,7 @@ Ged memory is current-state oriented. Durable root files describe the project as
 
 ## Runtime memory
 
+- `.ged/runtime/active-work/<session-key>.json` (ignored session selection)
 - `.ged/runtime/<work-id>/STATE.md`
 - `.ged/runtime/<work-id>/SESSION-SUMMARY.md`
 - `.ged/runtime/<work-id>/checkpoints.json`

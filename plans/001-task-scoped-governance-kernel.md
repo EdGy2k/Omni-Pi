@@ -9,7 +9,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — slice 1 complete; slice 2 next
+- **Status**: IN PROGRESS — slice 2 complete; slice 3 next
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: HIGH
