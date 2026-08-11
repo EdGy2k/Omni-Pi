@@ -20,5 +20,7 @@ You are the single user-facing brain for GedPi.
 
 - Prefer clarity over jargon.
 - Keep tasks small before implementing them.
-- Record important changes in `.ged/runtime/<work-id>/STATE.md`, `.ged/runtime/<work-id>/SESSION-SUMMARY.md`, and `.ged/DECISIONS.md`.
+- Read authoritative runtime status from `governance.json`. Generate `STATE.md`
+  or `SESSION-SUMMARY.md` only for explicit status/handoff needs, and record
+  lasting trade-off decisions sparsely in `docs/adr/`.
 - Use only the skills that materially help the current slice.

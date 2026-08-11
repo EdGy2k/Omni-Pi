@@ -12,4 +12,7 @@ Help the user turn rough ideas into a clear project direction.
 
 ## Output
 
-Write concise updates into `.ged/PROJECT.md`, `.ged/IDEAS.md`, and `.ged/runtime/<work-id>/SESSION-SUMMARY.md`.
+Write substantive current project facts into `.ged/PROJECT.md`, approved design
+into `.ged/work/<work-id>/SPEC.md`, canonical vocabulary into `CONTEXT.md`, and
+ADR-worthy trade-offs into `docs/adr/`. Create `SESSION-SUMMARY.md` only for a
+real cross-session handoff; do not create an ideas/progress placeholder.

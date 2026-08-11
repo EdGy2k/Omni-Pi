@@ -1,4 +1,8 @@
-# Progress
+# Legacy progress archive
+
+This retained historical note is not prompt context or runtime authority. Git
+history, release notes, active work artifacts, and explicit handoffs own current
+progress.
 
 ## 2026-08-10
 

@@ -1,63 +1,80 @@
-# Spec: Adaptive staffing and model profiles (Plan 003)
+# Spec: Simplify durable memory and skill lifecycle (Plan 004)
 
 ## Goal
 
-Make optional execution staffing proportional to decomposition, context spread,
-difficulty, and budget while keeping work governance unchanged and coordinator
-authority explicit.
+Keep only substantive, reusable project knowledge in durable memory while
+preserving authoritative governance state, immutable work identity, and all
+legacy user content through an idempotent migration.
+
+## Clarification checkpoint
+
+- `grill-me` skipped: the approved Plan 004 defines the target artifact model,
+  migration stop rules, trust boundaries, and acceptance checks precisely.
+- Users are developers initializing or continuing GedPi in existing projects.
+- Existing substantive content must never be guessed away, silently merged into
+  an ambiguous destination, or treated as runtime authority.
+
+## Skill-fit checkpoint
+
+- Use `ged-execution` for bounded implementation and `ged-verification` for the
+  planned checks.
+- No external or new project skill is warranted: the task is a one-time GedPi
+  architecture migration already covered by repository knowledge and tests.
 
 ## Scope
 
-- Represent Scout, planner/reviewer, Worker, Smart Worker, and verifier as typed
-  capabilities independent of model bindings and legacy role aliases.
-- Add a pure adaptive execution-profile recommender for `solo`, `assisted`,
-  `coordinated`, and `high-stakes` staffing.
-- Add an adaptive GPT-5.6 profile: Scout uses Sol/low, Worker uses Luna/max,
-  Smart Worker uses Sol/high, and strong read-only roles retain explicit user
-  overrides with same-provider fallbacks.
-- Normalize `maximum` and legacy `reasoningEffort` to Pi's canonical `max`.
-- Add `/ged-agents profile adaptive` for UI/headless sessions, validate exact
-  required model IDs against the live registry before saving, and report
-  unavailable configured profile chains without blocking startup.
-- Enforce one writer in the current checkout. Parallel writer lanes require
-  managed `worktree: true`; ordinary workers cannot fan out, and Smart Worker
-  gets depth-one, read-only-only nested capability through public Pi and
-  pi-subagents APIs.
-- Make native supervisor coordination the child decision/progress channel.
-  Keep external peer messaging separate, disabled by default, and limited to
-  verified fact/dependency sends to an exact user-directed target.
-- Generate and preflight role contracts through public `pi-subagents/preflight`.
+- Make fresh initialization create only required machine metadata and an empty
+  bootstrap work identity; create human artifacts only on substantive writes.
+- Add an explicit artifact-owner/consumer/authority/lifecycle inventory.
+- Scope task briefs, histories, recovery notes, and retry counts beneath the
+  immutable work item so repeated task IDs cannot collide.
+- Stop generating skills from task prose and stop deleting reusable project
+  skills when a task closes; retain explicit reusable skill creation with
+  provenance.
+- Migrate legacy glossary/domain context to root `CONTEXT.md` and legacy
+  decisions to sparse `docs/adr/` records with byte-exact backups, compatibility
+  pointers, migration metadata, and idempotent reruns.
+- Remove exact generated placeholders while preserving and reporting legacy
+  content without an unambiguous destination.
+- Separate trusted package workflow text and approved imported standards from
+  durable project data and arbitrary repository/model-written data. Content
+  blocks must be structurally injection-safe without rewriting ordinary text.
+- Generate runtime Markdown projections only for explicit status/handoff needs;
+  guards and prompt status continue to read `governance.json` directly.
 
 ## Non-goals
 
-- Staffing never changes governance mode, accepted evidence, lifecycle, commit,
-  push, product, architecture, migration, security, or UX authority.
-- Do not silently select an unconfigured provider when a profile model is
-  unavailable.
-- Do not implement durable-memory simplification from Plan 004.
-- Do not modify pi-subagents internals or claim writer isolation outside Ged's
-  intercepted coordinator dispatch path.
+- Do not weaken task-scoped governance, content fingerprints, lifecycle gates,
+  writer ownership, or adaptive staffing.
+- Do not infer user intent from a legacy filename or auto-promote ordinary notes
+  into approved standards.
+- Do not delete or auto-rewrite a legacy generated skill unless unchanged
+  generated provenance is cryptographically provable.
+- Do not retain writable duplicate authorities for domain context or decisions.
 
 ## Acceptance
 
-- Recommendation table covers small fixes, broad review, parallel recon,
-  disjoint implementation, coupled migration, high-stakes security, and low
-  budget without consulting governance state.
-- Generated Scout, Worker, Smart Worker, and verifier contracts expose exact
-  capability, context, model, thinking, tool, and fanout restrictions.
-- Adaptive profile setup fails before writing and names missing Luna/Sol IDs
-  when the live registry lacks them; configured startup degrades with a visible
-  diagnostic and preserves explicit fallback chains.
-- Parallel same-checkout writers are blocked; parallel scouts and managed
-  isolated writers pass; nested normal workers cannot dispatch; Smart Worker
-  can dispatch only read-only Ged agents at depth one.
-- Child decisions use `contact_supervisor`; routine completion uses results;
-  external peer messaging is opt-in and non-authorizing.
+- Fresh init's exact `.ged` tree contains only version/ignore/import metadata,
+  the session bootstrap pointer, and bootstrap `META.json`; no placeholder
+  PROJECT, work plan, status, handoff, progress, plan index, or skill registry.
+- Direct work creates one concise direct-change record; planned work creates
+  SPEC/TASKS/TESTS; read-only reporting and PROJECT/CONTEXT/ADR/handoff helpers
+  create files only for non-empty substantive content.
+- Two work items may both use `T01` with isolated histories, modified paths, and
+  recovery briefs.
+- Unmatched or unavailable skills create no files; explicit reusable project
+  skills persist after cleanup.
+- Mixed legacy fixtures preserve substantive glossary and decisions exactly in
+  their canonical destinations, back up originals, retain ambiguous data, and
+  produce no changes on rerun.
+- Adversarial headings, fake system/tool directives, and attempted closing
+  delimiters remain inside labeled data blocks and cannot change prompt
+  authority.
+- Missing, stale, or corrupt Markdown projections never affect governance and
+  explicit regeneration is deterministic.
 
-## Boundaries
+## Migration boundary
 
-- WorkflowScript writer enforcement accepts statically analyzable public
-  `runs.run`/`runs.all` launch objects and fails closed for dynamic parallel
-  lanes that could contain unisolated writers.
-- Live credential-backed model execution is environment-dependent; registry
-  presence and generated/preflight contracts are the deterministic gates.
+The migration may remove only exact known placeholders or source content that
+has a byte-exact backup and canonical destination. Substantive legacy files with
+no unambiguous destination remain in place and are named in migration metadata.

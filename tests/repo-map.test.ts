@@ -174,6 +174,9 @@ describe("repo map", () => {
     )) as { systemPrompt: string };
 
     expect(beforeStart.systemPrompt).toContain("## Repo Map");
+    expect(beforeStart.systemPrompt).toContain(
+      'BEGIN trust=runtime-data file="repository-map"',
+    );
     expect(beforeStart.systemPrompt).toContain("src/workflow.ts");
 
     recordRepoMapSignal(rootDir, "edit", "src/workflow.ts");
@@ -248,7 +251,7 @@ describe("repo map", () => {
     expect(beforeStart.systemPrompt).toContain("BASE");
     expect(beforeStart.systemPrompt).toContain("## Repo Map");
     expect(beforeStart.systemPrompt).toContain("src/workflow.ts");
-    expect(beforeStart.systemPrompt).toContain("## Current Ged Workflow Files");
+    expect(beforeStart.systemPrompt).toContain("## Current Ged Workflow Data");
   });
 
   test("parser/index fallback on one file does not collapse repo-map output", async () => {

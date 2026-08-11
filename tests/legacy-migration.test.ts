@@ -239,7 +239,10 @@ describe("legacy checkpoint migration", () => {
     await writeCandidate(rootDir, "late", checkpoint(3, "closed"));
     await expect(
       ensureLegacyCheckpointMigration(rootDir),
-    ).rejects.toMatchObject({ code: "source-drift" });
+    ).resolves.toMatchObject({ targetWorkId: workId });
+    expect(
+      await fileSnapshot(legacyMigrationPaths(rootDir).migrationDir),
+    ).toEqual(before);
   });
 
   it("imports one active v3 candidate when every other candidate is inactive", async () => {
@@ -422,7 +425,10 @@ describe("legacy checkpoint migration", () => {
       { sessionId: "session-a", requestId: "request-a" },
       "Already generated",
     );
-    await writeFile(generated.paths.checkpointsPath, checkpoint(3));
+    await writeFile(
+      path.join(generated.paths.runtimeDir, "checkpoints.json"),
+      checkpoint(3),
+    );
     await expect(
       ensureLegacyCheckpointMigration(generatedRoot),
     ).resolves.toEqual({ status: "not-needed" });

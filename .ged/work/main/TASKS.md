@@ -1,29 +1,34 @@
-# Tasks: Adaptive staffing and model profiles (Plan 003)
+# Tasks: Simplify durable memory and skill lifecycle (Plan 004)
 
-## Capability and recommendation model
+## Slice 1 — Artifact model and lazy initialization
 
-- [x] Define typed role capabilities, legacy aliases, and Smart Worker.
-- [x] Add and table-test the pure adaptive execution-profile recommender.
+- [x] Add the durable artifact inventory and versioned, idempotent migration
+  contract.
+- [x] Reduce fresh initialization/bootstrap work to exact machine metadata.
+- [x] Add create-on-substance helpers for PROJECT, reports, direct/planned work,
+  root CONTEXT, ADRs, and handoff projections.
 
-## Model profile and settings
+## Slice 2 — Work-scoped task evidence and durable skills
 
-- [x] Add adaptive GPT-5.6 bindings and canonical maximum-thinking migration.
-- [x] Add separate supervisor-bridge and peer-messaging settings with legacy
-  intercom migration.
-- [x] Add UI/headless profile setup, live registry validation, status, and
-  startup diagnostics.
+- [x] Move task brief/history/recovery consumers beneath
+  `.ged/work/<work-id>/tasks/<task-id>/` and prove repeated IDs are isolated.
+- [x] Remove task-paraphrase generation and automatic skill deletion.
+- [x] Add explicit reusable project-skill creation with durable provenance and
+  conservative legacy handling.
 
-## Runtime enforcement
+## Slice 3 — Domain migration and prompt trust
 
-- [x] Add one-writer/worktree dispatch validation for public workflowScript
-  launches.
-- [x] Restrict normal worker nesting and Smart Worker fanout through public
-  pi-subagents capability ceilings and depth contracts.
-- [x] Generate and public-preflight Scout/Worker/Smart Worker/verifier agents.
+- [x] Migrate glossary/context and decisions non-destructively with canonical
+  destinations, byte-exact backups, pointers, retained-content diagnostics, and
+  idempotent reruns.
+- [x] Separate approved instructions from durable/arbitrary data in prompts and
+  make data delimiters injection-safe.
 
-## Policy, docs, and completion
+## Slice 4 — Projection authority, docs, and completion
 
-- [x] Update orchestration prompts for adaptive staffing, native supervisor
-  coordination, narrow peer messaging, stable lane keys, and current APIs.
-- [x] Update README, architecture, decisions, changelog, and Plan 003 status.
-- [x] Run focused/full verification, independent review, and commit.
+- [x] Stop eager STATE/session/progress/global-plan projections and synthesize
+  status from authoritative governance state.
+- [x] Update README, AGENTS, bundled skills/prompts, architecture/context map,
+  decisions/ADR, changelog, and Plan 004 status.
+- [x] Run focused/full verification, independent review, adjudicate findings,
+  and commit.

@@ -1,5 +1,15 @@
 {
-  "accepted": ["AGENTS.md", "CLAUDE.md"],
+  "accepted": [
+    {
+      "path": "AGENTS.md",
+      "hash": "39ebd1caa5c426cef6c6ecf237c695f91beb1d7e6a2d1d90a8063a0b3ec94695"
+    },
+    {
+      "path": "CLAUDE.md",
+      "hash": "fc745d4c574dfc4fa02c9d5b3cc1c6e4a80d310160ebb36a104a30278dfe4191"
+    }
+  ],
   "rejected": [],
-  "pending": []
+  "pending": [],
+  "standardsHash": "6f9cf004ad89b8cd8d44b05a4944d2b6813353889d0e264bae332d2ca5872224"
 }

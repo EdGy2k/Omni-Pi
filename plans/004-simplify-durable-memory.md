@@ -9,6 +9,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: MED
@@ -139,15 +140,15 @@ artifact examples. Add an Unreleased migration entry.
 
 ## Done criteria
 
-- [ ] Fresh initialization creates only minimal machine metadata.
-- [ ] Direct/read-only/planned work creates only relevant artifacts.
-- [ ] Task histories are work-scoped.
-- [ ] No unmatched task auto-generates a skill.
-- [ ] Domain context/decisions have one canonical destination.
-- [ ] Prompt data and approved instructions have explicit trust labels.
-- [ ] Human projections are never authorization sources.
-- [ ] Migration is idempotent and preserves substantive content.
-- [ ] Focused/full verification and changelog pass.
+- [x] Fresh initialization creates only minimal machine metadata.
+- [x] Direct/read-only/planned work creates only relevant artifacts.
+- [x] Task histories are work-scoped.
+- [x] No unmatched task auto-generates a skill.
+- [x] Domain context/decisions have one canonical destination.
+- [x] Prompt data and approved instructions have explicit trust labels.
+- [x] Human projections are never authorization sources.
+- [x] Migration is idempotent and preserves substantive content.
+- [x] Focused/full verification and changelog pass.
 
 ## STOP conditions
 
@@ -163,4 +164,3 @@ artifact examples. Add an Unreleased migration entry.
 Adding a new durable artifact requires documenting its producer, consumer,
 authority level, lifecycle, and migration. “Might be useful later” is not enough
 to create a persistent file.
-

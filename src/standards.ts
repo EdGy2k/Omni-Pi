@@ -5,15 +5,21 @@ import path from "node:path";
 import { writeFileAtomic } from "./atomic.js";
 import { GED_DIR } from "./contracts.js";
 
-export const GED_STANDARD_VERSION = 2;
+export const GED_STANDARD_VERSION = 3;
 const VERSION_PATH = path.join(GED_DIR, "VERSION");
 const IMPORT_STATE_PATH = path.join(GED_DIR, "IMPORT-STATE.json");
 const STANDARDS_PATH = path.join(GED_DIR, "STANDARDS.md");
 
 interface ImportState {
-  accepted: string[];
-  rejected: string[];
-  pending: string[];
+  accepted: ImportReference[];
+  rejected: ImportReference[];
+  pending: ImportReference[];
+  standardsHash: string | null;
+}
+
+interface ImportReference {
+  path: string;
+  hash: string;
 }
 
 export interface DiscoveredStandard {
@@ -70,7 +76,7 @@ function summarize(content: string): string {
 }
 
 function hashContent(content: string): string {
-  return createHash("sha1").update(content).digest("hex");
+  return createHash("sha256").update(content).digest("hex");
 }
 
 async function readDiscoveredFile(
@@ -183,11 +189,40 @@ export async function scanExternalStandards(
 
 async function readImportState(rootDir: string): Promise<ImportState> {
   try {
-    return JSON.parse(
+    const parsed = JSON.parse(
       await readFile(path.join(rootDir, IMPORT_STATE_PATH), "utf8"),
-    ) as ImportState;
+    ) as Partial<ImportState>;
+    const normalize = (value: unknown): ImportReference[] =>
+      Array.isArray(value)
+        ? value.flatMap((entry) => {
+            if (typeof entry === "string") {
+              return [{ path: entry, hash: "legacy-unbound" }];
+            }
+            if (
+              entry &&
+              typeof entry === "object" &&
+              typeof (entry as ImportReference).path === "string" &&
+              typeof (entry as ImportReference).hash === "string"
+            ) {
+              return [entry as ImportReference];
+            }
+            return [];
+          })
+        : [];
+    return {
+      accepted: normalize(parsed.accepted),
+      rejected: normalize(parsed.rejected),
+      pending: normalize(parsed.pending),
+      standardsHash:
+        typeof parsed.standardsHash === "string" ? parsed.standardsHash : null,
+    };
   } catch {
-    return { accepted: [], rejected: [], pending: [] };
+    return {
+      accepted: [],
+      rejected: [],
+      pending: [],
+      standardsHash: null,
+    };
   }
 }
 
@@ -204,26 +239,43 @@ async function writeImportState(
 
 async function syncAcceptedStandards(
   rootDir: string,
-  acceptedPaths: string[],
-): Promise<void> {
+  acceptedReferences: ImportReference[],
+): Promise<string | null> {
   const sections = await Promise.all(
-    acceptedPaths.map(async (relativePath) => {
-      const content = await readOptional(path.join(rootDir, relativePath));
+    acceptedReferences.map(async (reference) => {
+      const content = await readOptional(path.join(rootDir, reference.path));
       if (!content?.trim()) {
         return null;
       }
-      return `## ${relativePath}\n\n\`\`\`md\n${content.trim()}\n\`\`\`\n`;
+      if (hashContent(content) !== reference.hash) {
+        return null;
+      }
+      let marker = `GED_APPROVED_${reference.hash.toUpperCase()}`;
+      while (content.includes(marker)) marker += "_X";
+      return `## ${reference.path}\n\nApproved content hash: ${reference.hash}\n\n<<<${marker}:BEGIN>>>\n${content}${content.endsWith("\n") ? "" : "\n"}<<<${marker}:END>>>\n`;
     }),
   );
 
   const body = sections.filter(Boolean).join("\n");
+  if (!body) return null;
   const next = `# Imported Standards
 
 These standards were imported from other harness-specific instruction files and approved for Ged use.
 
-${body || "No imported standards have been accepted yet.\n"}
+${body.trimEnd()}
 `;
   await writeFileAtomic(path.join(rootDir, STANDARDS_PATH), next);
+  return hashContent(next);
+}
+
+export async function readVerifiedApprovedStandards(
+  rootDir: string,
+): Promise<string | null> {
+  const state = await readImportState(rootDir);
+  if (!state.standardsHash) return null;
+  const content = await readOptional(path.join(rootDir, STANDARDS_PATH));
+  if (!content || hashContent(content) !== state.standardsHash) return null;
+  return content;
 }
 
 function buildConfirmationMessage(candidates: DiscoveredStandard[]): string {
@@ -243,20 +295,43 @@ export async function resolveImportedStandards(
   const repoWide = discovered.filter((entry) => entry.scope === "repo");
   const state = await readImportState(rootDir);
 
-  const known = new Set([...state.accepted, ...state.rejected]);
-  const newlyPending = repoWide.filter((entry) => !known.has(entry.path));
+  const referenceKey = (entry: ImportReference) =>
+    `${entry.path}\0${entry.hash}`;
+  const known = new Set(
+    [...state.accepted, ...state.rejected].map(referenceKey),
+  );
+  const newlyPending = repoWide.filter(
+    (entry) => !known.has(referenceKey(entry)),
+  );
   let accepted = repoWide.filter((entry) =>
-    state.accepted.includes(entry.path),
+    state.accepted.some(
+      (reference) => referenceKey(reference) === referenceKey(entry),
+    ),
   );
   let rejected = repoWide.filter((entry) =>
-    state.rejected.includes(entry.path),
+    state.rejected.some(
+      (reference) => referenceKey(reference) === referenceKey(entry),
+    ),
   );
-  let pending = repoWide.filter((entry) => state.pending.includes(entry.path));
+  let pending = repoWide.filter((entry) =>
+    state.pending.some(
+      (reference) => referenceKey(reference) === referenceKey(entry),
+    ),
+  );
 
   if (newlyPending.length > 0) {
     pending = [...pending, ...newlyPending];
-    state.pending = Array.from(
-      new Set([...state.pending, ...newlyPending.map((entry) => entry.path)]),
+    state.pending = [
+      ...state.pending,
+      ...newlyPending.map(({ path: candidatePath, hash }) => ({
+        path: candidatePath,
+        hash,
+      })),
+    ].filter(
+      (entry, index, all) =>
+        all.findIndex(
+          (candidate) => referenceKey(candidate) === referenceKey(entry),
+        ) === index,
     );
   }
 
@@ -266,26 +341,52 @@ export async function resolveImportedStandards(
       buildConfirmationMessage(pending),
     );
     if (confirmed) {
-      state.accepted = Array.from(
-        new Set([...state.accepted, ...pending.map((entry) => entry.path)]),
-      );
+      const pendingPaths = new Set(pending.map((entry) => entry.path));
+      state.accepted = [
+        ...state.accepted.filter(
+          (reference) => !pendingPaths.has(reference.path),
+        ),
+        ...pending.map(({ path: candidatePath, hash }) => ({
+          path: candidatePath,
+          hash,
+        })),
+      ];
       accepted = repoWide.filter((entry) =>
-        state.accepted.includes(entry.path),
+        state.accepted.some(
+          (reference) => referenceKey(reference) === referenceKey(entry),
+        ),
       );
     } else {
-      state.rejected = Array.from(
-        new Set([...state.rejected, ...pending.map((entry) => entry.path)]),
-      );
+      const pendingPaths = new Set(pending.map((entry) => entry.path));
+      state.rejected = [
+        ...state.rejected.filter(
+          (reference) => !pendingPaths.has(reference.path),
+        ),
+        ...pending.map(({ path: candidatePath, hash }) => ({
+          path: candidatePath,
+          hash,
+        })),
+      ];
       rejected = repoWide.filter((entry) =>
-        state.rejected.includes(entry.path),
+        state.rejected.some(
+          (reference) => referenceKey(reference) === referenceKey(entry),
+        ),
       );
     }
     state.pending = [];
     pending = [];
   }
 
+  const standardsHash = await syncAcceptedStandards(rootDir, state.accepted);
+  if (standardsHash) {
+    state.standardsHash = standardsHash;
+  } else if (state.standardsHash) {
+    const existing = await readOptional(path.join(rootDir, STANDARDS_PATH));
+    if (!existing || hashContent(existing) !== state.standardsHash) {
+      state.standardsHash = null;
+    }
+  }
   await writeImportState(rootDir, state);
-  await syncAcceptedStandards(rootDir, state.accepted);
 
   return {
     discovered,

@@ -144,20 +144,3 @@ export function detectPreset(
   if (/\b(feat|feature|add|implement|build)\b/u.test(lower)) return "feature";
   return null;
 }
-
-export interface GedConfig {
-  models: {
-    brain: string;
-  };
-  cleanupCompletedPlans: boolean;
-}
-
-export type PlanStatus = "active" | "completed" | "discarded";
-
-export interface PlanEntry {
-  id: string;
-  title: string;
-  status: PlanStatus;
-  createdAt: string;
-  completedAt?: string;
-}

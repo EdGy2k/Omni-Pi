@@ -1,7 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
-import path from "node:path";
-
 import { writeFileAtomic } from "./atomic.js";
+import { createAdr } from "./durable-memory.js";
 import { activeGedPaths } from "./ged-paths.js";
 
 export interface SyncRequest {
@@ -78,7 +78,6 @@ export async function syncGedMemory(
     );
   }
   const sessionPath = paths.sessionSummaryPath;
-  const decisionsPath = path.join(rootDir, ".ged", "DECISIONS.md");
 
   const safeSummary = sanitizeBulletLine(request.summary);
   if (safeSummary) {
@@ -94,12 +93,20 @@ export async function syncGedMemory(
     .filter((decision) => decision.length > 0);
 
   if (safeDecisions.length > 0) {
-    const decisionLines = safeDecisions.map(
-      (decision) =>
-        `Date: pending\n  - Decision: ${decision}\n  - Why: Captured during sync.\n  - Impact: To be refined.`,
+    const digest = createHash("sha256")
+      .update(safeDecisions.join("\0"))
+      .digest("hex")
+      .slice(0, 12);
+    const date = new Date().toISOString().slice(0, 10);
+    await createAdr(
+      rootDir,
+      `sync-${date}-${digest}`,
+      `# Decisions captured during sync\n\nStatus: accepted\nDate: ${date}\n\n${safeDecisions
+        .map(
+          (decision) =>
+            `- Decision: ${decision}\n  - Why: Captured during explicit Ged sync.\n  - Impact: To be refined when the trade-off requires more detail.`,
+        )
+        .join("\n\n")}\n`,
     );
-    const content = await readFile(decisionsPath, "utf8");
-    const next = `${content.trimEnd()}\n${decisionLines.map((line) => `\n- ${line}`).join("\n")}\n`;
-    await writeFileAtomic(decisionsPath, next);
   }
 }

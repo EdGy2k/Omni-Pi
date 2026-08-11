@@ -8,6 +8,7 @@ import {
   renderContextSummary,
 } from "./context.js";
 import type { TaskAttemptResult, TaskBrief } from "./contracts.js";
+import { taskArtifactDir } from "./durable-memory.js";
 import { activeGedPaths, relativeGedPath } from "./ged-paths.js";
 import {
   cleanupUnusedProjectSkills,
@@ -55,23 +56,24 @@ async function readRetryLimit(testsPath: string): Promise<number> {
   }
 }
 
-async function ensureTaskDir(rootDir: string): Promise<string> {
-  const taskDir = path.join(rootDir, ".ged", "tasks");
+async function ensureTaskDir(
+  rootDir: string,
+  workId: string,
+  taskId: string,
+): Promise<string> {
+  const taskDir = taskArtifactDir(rootDir, workId, taskId);
   await mkdir(taskDir, { recursive: true });
   return taskDir;
 }
 
-function historyPath(taskDir: string, taskId: string): string {
-  return path.join(taskDir, `${taskId}.history.json`);
+function historyPath(taskDir: string): string {
+  return path.join(taskDir, "HISTORY.json");
 }
 
-async function readTaskHistory(
-  taskDir: string,
-  taskId: string,
-): Promise<TaskAttemptResult[]> {
+async function readTaskHistory(taskDir: string): Promise<TaskAttemptResult[]> {
   try {
     return JSON.parse(
-      await readFile(historyPath(taskDir, taskId), "utf8"),
+      await readFile(historyPath(taskDir), "utf8"),
     ) as TaskAttemptResult[];
   } catch {
     return [];
@@ -80,13 +82,9 @@ async function readTaskHistory(
 
 async function writeTaskHistory(
   taskDir: string,
-  taskId: string,
   history: TaskAttemptResult[],
 ): Promise<void> {
-  await writeFileAtomic(
-    historyPath(taskDir, taskId),
-    JSON.stringify(history, null, 2),
-  );
+  await writeFileAtomic(historyPath(taskDir), JSON.stringify(history, null, 2));
 }
 
 async function writeTaskBrief(taskDir: string, task: TaskBrief): Promise<void> {
@@ -108,7 +106,7 @@ ${task.skills.map((item) => `- ${item}`).join("\n") || "- None"}
 
 ${task.contextFiles.map((item) => `- ${item}`).join("\n") || "- None"}
 `;
-  await writeFileAtomic(path.join(taskDir, `${task.id}-BRIEF.md`), content);
+  await writeFileAtomic(path.join(taskDir, "BRIEF.md"), content);
 }
 
 export async function prepareNextTaskDispatch(
@@ -131,7 +129,7 @@ export async function prepareNextTaskDispatch(
 
   const dependencyResult = await ensureTaskSkillDependencies(rootDir, nextTask);
   const preparedTask = dependencyResult.task;
-  const taskDir = await ensureTaskDir(rootDir);
+  const taskDir = await ensureTaskDir(rootDir, paths.workId, preparedTask.id);
   await writeTaskBrief(taskDir, preparedTask);
   await writeTasks(
     tasksPath,
@@ -142,7 +140,7 @@ export async function prepareNextTaskDispatch(
     ),
   );
 
-  const briefPath = path.join(taskDir, `${preparedTask.id}-BRIEF.md`);
+  const briefPath = path.join(taskDir, "BRIEF.md");
   const preReadContext = await gatherTaskContext(rootDir, preparedTask, 4000);
   const availableSkills = await loadAvailableSkills(rootDir);
   const availableNames = new Set(availableSkills.map((skill) => skill.name));
@@ -167,8 +165,8 @@ export async function prepareNextTaskDispatch(
       ? `Relevant skills: ${preparedTask.skills.join(", ")}`
       : "Relevant skills: none explicitly listed",
     missingSkills.length > 0
-      ? `Missing skills were auto-generated for this task: ${missingSkills.join(", ")}`
-      : "All required skills are available project-scope.",
+      ? `Unavailable skills were not generated; continue without them unless a reusable capability gap is explicitly approved: ${missingSkills.join(", ")}`
+      : "All listed skills are available.",
     ...(preReadContext.length > 0
       ? [
           "",
@@ -236,7 +234,7 @@ ${modifiedFilesSection}
 
 Revisit the task inputs, tighten the scope, and retry ${task.id} with a narrower, clearer implementation slice.
 `;
-  await writeFileAtomic(path.join(taskDir, `${task.id}-RECOVERY.md`), content);
+  await writeFileAtomic(path.join(taskDir, "RECOVERY.md"), content);
 }
 
 function formatVerificationSummary(result: TaskAttemptResult): string {
@@ -273,19 +271,19 @@ export async function executeNextTask(
     };
   }
 
-  const taskDir = await ensureTaskDir(rootDir);
+  const taskDir = await ensureTaskDir(rootDir, paths.workId, nextTask.id);
   const dependencyResult = await ensureTaskSkillDependencies(rootDir, nextTask);
   const preparedTask = dependencyResult.task;
   const preparedTasks = updateTask(tasks, preparedTask.id, preparedTask);
   await writeTasks(tasksPath, preparedTasks);
   await writeTaskBrief(taskDir, preparedTask);
 
-  const history = await readTaskHistory(taskDir, preparedTask.id);
+  const history = await readTaskHistory(taskDir);
   const retryLimit = await readRetryLimit(testsPath);
   const attempt = history.length + 1;
   const implementationResult = await engine.runTask(preparedTask, attempt);
   const implementationHistory = [...history, implementationResult];
-  await writeTaskHistory(taskDir, preparedTask.id, implementationHistory);
+  await writeTaskHistory(taskDir, implementationHistory);
 
   if (implementationResult.verification.passed) {
     const completedTasks = updateTaskStatus(
@@ -327,7 +325,7 @@ export async function executeNextTask(
     taskId: preparedTask.id,
     message: `Task ${preparedTask.id} remains blocked after ${attempt} implementation attempts. ${formatVerificationSummary(implementationResult)}`,
     recoveryOptions: [
-      "Review the recovery notes in `.ged/tasks/` and refine the task inputs.",
+      `Review the recovery notes in ${relativeGedPath(rootDir, path.join(taskDir, "RECOVERY.md"))} and refine the task inputs.`,
       "Restructure the task into smaller slices.",
       "Sync the latest learnings into `.ged/` before attempting a different approach.",
       "Manually inspect and fix the failing checks listed in the active work `TESTS.md`.",

@@ -20,3 +20,6 @@
 - Add user-facing or dependency changes under `CHANGELOG.md` → `Unreleased`.
 - Preserve substantive legacy `.ged` content during migrations and make
   migrations idempotent.
+- Create human memory only on substantive writes. Use root `CONTEXT.md` and
+  sparse `docs/adr/` as canonical domain/decision destinations; frame dynamic
+  prompt data separately from approved instructions.

@@ -14,6 +14,10 @@ import {
   snapshotsEqual,
 } from "./content-fingerprint.js";
 import {
+  createDirectChangeRecord,
+  createPlannedWorkArtifacts,
+} from "./durable-memory.js";
+import {
   type ActiveWorkPointer,
   bindGedWork,
   clearActiveWorkSession,
@@ -171,20 +175,9 @@ function pendingMutationKey(
   return JSON.stringify([requestKey, requestId, toolCallId]);
 }
 
-const DURABLE_GED_FILES = new Set([
-  "ARCHITECTURE.md",
-  "CONFIG.md",
-  "CONTEXT-MAP.md",
-  "DECISIONS.md",
-  "GLOSSARY.md",
-  "IDEAS.md",
-  "PATTERNS.md",
-  "PROGRESS.md",
-  "PROJECT.md",
-  "SKILLS.md",
-  "STANDARDS.md",
-]);
+const DURABLE_GED_FILES = new Set(["PROJECT.md"]);
 const WORK_PLANNING_FILES = new Set([
+  "DIRECT.md",
   "NOTES.md",
   "SPEC.md",
   "TASKS.md",
@@ -247,7 +240,7 @@ function classifyGedSubpath(
   if (subpath === "runtime" || subpath.startsWith("runtime/")) {
     return "protected";
   }
-  if (subpath === "project-skills" || subpath.startsWith("project-skills/")) {
+  if (subpath.startsWith("reports/")) {
     return "metadata";
   }
   if (DURABLE_GED_FILES.has(subpath)) return "metadata";
@@ -831,6 +824,13 @@ export function registerGedWorkRuntime(
       const gedPathKind = filePath
         ? await classifyGedPath(ctx.cwd, filePath, activeRequest.workId)
         : null;
+      const isMemoryMetadataMutation =
+        event.toolName === "ged_memory" &&
+        event.input &&
+        typeof event.input === "object" &&
+        ["project-summary", "report", "handoff"].includes(
+          String((event.input as { operation?: unknown }).operation ?? ""),
+        );
       if (gedPathKind === "protected") {
         return {
           block: true,
@@ -842,7 +842,7 @@ export function registerGedWorkRuntime(
         bashCommand !== null && isPotentialGitCommit(bashCommand);
       const action = isCommit
         ? "commit"
-        : gedPathKind === "metadata"
+        : gedPathKind === "metadata" || isMemoryMetadataMutation
           ? "metadata-mutation"
           : "source-mutation";
       const state = await readGovernanceState(ctx.cwd, activeRequest.workId);
@@ -1261,6 +1261,15 @@ export function registerGedWorkRuntime(
         opened = await openGedWork(ctx.cwd, identity, params.summary ?? "", {
           bindRequest: false,
         });
+        if (governance.decision.mode === "planned-change") {
+          await createPlannedWorkArtifacts(ctx.cwd, opened.workId);
+        } else {
+          await createDirectChangeRecord(ctx.cwd, opened.workId, {
+            summary: params.summary ?? "",
+            decisionReason: governance.decision.reason,
+            deterministicCheck: params.deterministicCheck ?? false,
+          });
+        }
         const contentBaseline = await captureSnapshot(ctx.cwd);
         state = await initializeGovernanceState(ctx.cwd, opened.workId, {
           decision: governance.decision,

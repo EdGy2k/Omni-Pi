@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -219,7 +219,9 @@ describe("governance state store", () => {
       currentSlice: "migration",
     });
     const expected = renderGovernanceProjection(state);
-    await rm(opened.paths.statePath);
+    await expect(
+      readFile(opened.paths.statePath, "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
 
     expect(await regenerateGovernanceProjection(rootDir, opened.workId)).toBe(
       expected,
@@ -385,6 +387,7 @@ describe("governance state store", () => {
       new Date("2026-08-11T10:02:00.000Z"),
     );
     expect(state).toMatchObject({ lifecycle: "paused", revision: 3 });
+    await regenerateGovernanceProjection(rootDir, opened.workId);
     expect(await readFile(opened.paths.statePath, "utf8")).toContain(
       `Resume exact work ID ${opened.workId}`,
     );
@@ -429,6 +432,7 @@ describe("governance state store", () => {
         reason: "Terminal work must not reopen",
       }),
     ).rejects.toMatchObject({ code: "governance-blocked" });
+    await regenerateGovernanceProjection(rootDir, opened.workId);
     const projection = await readFile(opened.paths.statePath, "utf8");
     expect(projection).toContain("Current Phase: Closed");
     expect(projection).toContain("Active Task: None");

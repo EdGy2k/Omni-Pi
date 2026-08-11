@@ -799,7 +799,6 @@ export async function initializeGovernanceState(
       lifecycle: input.lifecycle ?? "active",
     });
     await writeStructuredState(rootDir, workId, state);
-    await writeProjectionFromState(rootDir, state);
     return state;
   });
 }
@@ -845,7 +844,6 @@ export async function compareAndSwapGovernanceState(
       updatedAt: now.toISOString(),
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -872,7 +870,6 @@ export async function appendGovernanceEvidence(
       evidence: [...current.evidence, record],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -904,7 +901,6 @@ async function appendEvidenceWithPolicy(
       evidence: [...current.evidence, record],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -949,7 +945,6 @@ export async function beginGovernanceMutation(
       pendingMutations: [...(current.pendingMutations ?? []), pending],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -999,7 +994,6 @@ export async function completeGovernanceMutation(
       evidence: [...current.evidence, record],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -1030,7 +1024,6 @@ export async function clearGovernanceMutation(
       ),
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -1065,7 +1058,6 @@ export async function beginGovernanceCommit(
       pendingCommits: [...(current.pendingCommits ?? []), pending],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -1096,7 +1088,6 @@ export async function clearGovernanceCommit(
       ),
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -1152,7 +1143,6 @@ export async function completeGovernanceCommit(
       evidence: [...current.evidence, record],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }
@@ -1328,7 +1318,6 @@ export async function transitionGovernanceLifecycle(
       ],
     });
     await writeStructuredState(rootDir, workId, next);
-    await writeProjectionFromState(rootDir, next);
     return next;
   });
 }

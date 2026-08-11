@@ -4,7 +4,9 @@ These standards were imported from other harness-specific instruction files and 
 
 ## AGENTS.md
 
-```md
+Approved content hash: 39ebd1caa5c426cef6c6ecf237c695f91beb1d7e6a2d1d90a8063a0b3ec94695
+
+<<<GED_APPROVED_39EBD1CAA5C426CEF6C6ECF237C695F91BEB1D7E6A2D1D90A8063A0B3EC94695:BEGIN>>>
 # AGENTS.md
 
 This file provides guidance to Codex and other AI agents when working with code in this repository.
@@ -34,7 +36,13 @@ writers, and use external `pi-intercom` only for opt-in exact-target verified
 dependency facts. Native supervisor routing owns child decisions. Assistant
 completion is evidence proposal, never authorization.
 
-**Memory**: `.ged/` files hold durable project standards, context, and Ged workflow state — not source code. `.pi/` is Pi-runtime-local state and should stay out of Git.
+**Memory**: Fresh `.ged/` initialization is machine-metadata-only. Substantive
+project summary lives in lazy `.ged/PROJECT.md`, domain vocabulary in root
+`CONTEXT.md`, trade-off decisions in sparse `docs/adr/`, approved imported
+instructions in `.ged/STANDARDS.md`, and native reusable project skills in
+`.agents/skills/`. Work evidence is scoped by immutable work ID; runtime
+Markdown is optional projection/handoff data and never authority. `.pi/` is
+Pi-runtime-local state and should stay out of Git.
 
 **Extensions**: Pi loads extensions listed in `package.json` under `pi.extensions`. Custom entrypoints live in `extensions/`. Third-party extensions are referenced via `./node_modules/` paths.
 
@@ -88,6 +96,9 @@ The Ged workflow is always active:
 - ask the user whether to keep repo-wide standards in Ged's durable config
 - run skill-fit for planned work and install/create project skills only for a
   real reusable capability gap
+- never generate a skill from unmatched task prose or delete reusable project
+  knowledge when a task closes; explicit creation uses `ged_skill` and Pi's
+  native `.agents/skills/` project discovery
 - ensure `.pi/` is ignored in `.gitignore` when the project is a Git repo
 
 **Commits**: After completing any task — including individual implementation slices, bug fixes, refactors, or cleanup — create a git commit to snapshot the work. Commit every change you make unless the user explicitly asks not to. Before committing, run the relevant verification for the touched area and fix any failures. Use conventional commit format (`feat:`, `fix:`, `refactor:`, `chore:`, etc.). Never leave completed work uncommitted. Check `git status` after each task; if there are staged or unstaged changes, commit them.
@@ -135,11 +146,13 @@ Tests live in `tests/`. Vitest covers the durable planning/implementation workfl
 ## Model API Keys
 
 The Pi runtime manages model credentials externally. No API key setup is required in this repo.
-```
+<<<GED_APPROVED_39EBD1CAA5C426CEF6C6ECF237C695F91BEB1D7E6A2D1D90A8063A0B3EC94695:END>>>
 
 ## CLAUDE.md
 
-```md
+Approved content hash: fc745d4c574dfc4fa02c9d5b3cc1c6e4a80d310160ebb36a104a30278dfe4191
+
+<<<GED_APPROVED_FC745D4C574DFC4FA02C9D5B3CC1C6E4A80D310160EBB36A104A30278DFE4191:BEGIN>>>
 # CLAUDE.md
 
 This repository keeps its detailed agent guidance in `AGENTS.md`.
@@ -147,4 +160,4 @@ This repository keeps its detailed agent guidance in `AGENTS.md`.
 Claude Code agents should read and follow `AGENTS.md` as the source of truth for commands, architecture, workflow, commit policy, TypeScript rules, testing, and model credential handling.
 
 To keep guidance synchronized, update `AGENTS.md` first and keep this file as a thin pointer rather than duplicating the full instructions.
-```
+<<<GED_APPROVED_FC745D4C574DFC4FA02C9D5B3CC1C6E4A80D310160EBB36A104A30278DFE4191:END>>>

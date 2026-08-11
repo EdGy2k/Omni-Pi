@@ -206,11 +206,21 @@ messages into authority.
 
 ## Durable memory
 
-- Root `.ged/*.md` files contain compact current project truth.
-- `.ged/work/<work-id>/` contains current task artifacts.
+- Fresh init creates required machine metadata only; human Markdown is lazy and
+  must contain substantive content.
+- `.ged/PROJECT.md`, root `CONTEXT.md`, and sparse `docs/adr/` records are the
+  canonical project-summary, vocabulary, and decision destinations.
+- Direct work gets `DIRECT.md`; planned work gets SPEC/TASKS/TESTS; attempt and
+  recovery artifacts live under `.ged/work/<work-id>/tasks/<task-id>/`.
 - `.ged/runtime/<work-id>/governance.json` contains authoritative machine state.
-- Runtime Markdown is projection/handoff material.
+- Runtime Markdown is optional projection/handoff material, generated only for
+  explicit status or real cross-session handoff needs.
+- Explicit reusable project skills live under Pi-native `.agents/skills/` and
+  persist independently of task completion.
 - `.pi/` contains ignored acceleration caches such as the repo map.
 
-Current-state documents should be edited in place. Historical narrative belongs
-in Git history, release notes, archived plans, or explicit decision records.
+Legacy v2 glossary/decision bytes are backed up and migrated exactly once;
+ambiguous substantive data is retained and reported instead of guessed away.
+Dynamic prompt content is trust-labeled and collision-safe framed. Current-state
+documents should be edited in place. Historical narrative belongs in Git
+history, release notes, retained archives, or explicit ADRs.

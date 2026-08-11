@@ -1,9 +1,11 @@
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { writeFileAtomic } from "./atomic.js";
+import { publishFileExclusive, writeFileAtomic } from "./atomic.js";
 import type { SkillCandidate, SkillPolicy, TaskBrief } from "./contracts.js";
+import { assertSafeRepositoryWritePath } from "./path-safety.js";
 
 export interface SkillSignal {
   label: string;
@@ -62,13 +64,6 @@ export const BUNDLED_GED_SKILLS = new Set([
   "brainstorming",
 ]);
 
-export interface SkillRegistry {
-  installed: SkillCandidate[];
-  recommended: SkillCandidate[];
-  deferred: SkillCandidate[];
-  rejected: SkillCandidate[];
-}
-
 export interface SkillInstallPlan {
   commands: string[];
   installed: SkillCandidate[];
@@ -77,12 +72,6 @@ export interface SkillInstallPlan {
     args: string[];
     summary: string;
   }>;
-}
-
-export interface SkillInstallResult {
-  name: string;
-  success: boolean;
-  error?: string;
 }
 
 export interface SkillTrigger {
@@ -102,13 +91,16 @@ interface ProjectSkillRecord {
   sourcePath?: string;
   taskRefs: string[];
   installedAt: string;
+  reason?: string;
+  provenance?: "installed-copy" | "reusable-explicit" | "legacy-unverified";
+  contentHash?: string;
 }
 
 interface ProjectSkillState {
+  schemaVersion?: 2;
   managed: ProjectSkillRecord[];
 }
 
-const PROJECT_SKILLS_DIRNAME = "project-skills";
 const PROJECT_SKILLS_STATE = "SKILLS-STATE.json";
 
 export function toSkillCandidate(signal: SkillSignal): SkillCandidate {
@@ -118,76 +110,6 @@ export function toSkillCandidate(signal: SkillSignal): SkillCandidate {
     confidence: signal.policy === "auto-install" ? "high" : "medium",
     policy: signal.policy ?? "recommend-only",
   };
-}
-
-export function renderSkillDecision(candidate: SkillCandidate): string {
-  return `- ${candidate.name} [${candidate.policy}] - ${candidate.reason}`;
-}
-
-function parseSection(content: string, heading: string): string[] {
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const sectionRegex = new RegExp(
-    `${escapedHeading}\\n\\n([\\s\\S]*?)(?=\\n## |$)`,
-    "u",
-  );
-  const match = content.match(sectionRegex)?.[1] ?? "";
-  return match
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- ") && line !== "- None yet");
-}
-
-function parseSkillLine(line: string): SkillCandidate {
-  const value = line.slice(2);
-  const match = value.match(/^(.*?)\s+\[(.*?)\]\s+-\s+(.*)$/u);
-  if (match) {
-    return {
-      name: match[1].trim(),
-      policy: match[2].trim() as SkillPolicy,
-      reason: match[3].trim(),
-      confidence: match[2].trim() === "auto-install" ? "high" : "medium",
-    };
-  }
-
-  return {
-    name: value.trim(),
-    policy: "recommend-only",
-    reason: "No reason recorded.",
-    confidence: "low",
-  };
-}
-
-export function parseSkillRegistry(content: string): SkillRegistry {
-  return {
-    installed: parseSection(content, "## Installed").map(parseSkillLine),
-    recommended: parseSection(content, "## Recommended").map(parseSkillLine),
-    deferred: parseSection(content, "## Deferred").map(parseSkillLine),
-    rejected: parseSection(content, "## Rejected").map(parseSkillLine),
-  };
-}
-
-export function renderSkillRegistry(registry: SkillRegistry): string {
-  const sections: Array<[string, SkillCandidate[]]> = [
-    ["Installed", registry.installed],
-    ["Recommended", registry.recommended],
-    ["Deferred", registry.deferred],
-    ["Rejected", registry.rejected],
-  ];
-
-  return sections
-    .map(([title, skills]) => {
-      const items =
-        skills.length > 0 ? skills.map(renderSkillDecision) : ["- None yet"];
-      return `${title}:\n${items.join("\n")}`;
-    })
-    .join("\n\n");
-}
-
-export async function readSkillRegistry(
-  rootDir: string,
-): Promise<SkillRegistry> {
-  const skillPath = path.join(rootDir, ".ged", "SKILLS.md");
-  return parseSkillRegistry(await readFile(skillPath, "utf8"));
 }
 
 export function buildSkillInstallPlan(
@@ -211,88 +133,6 @@ export function buildSkillInstallPlan(
     }));
   const commands = steps.map((step) => [step.command, ...step.args].join(" "));
   return { commands, installed, steps };
-}
-
-export async function appendSkillUsageNote(
-  rootDir: string,
-  note: string,
-): Promise<void> {
-  const skillPath = path.join(rootDir, ".ged", "SKILLS.md");
-  const content = await readFile(skillPath, "utf8");
-  const next = content.replace(
-    /## Usage Notes\n\n([\s\S]*)$/u,
-    (_match, section) => `## Usage Notes\n\n${section.trimEnd()}\n- ${note}\n`,
-  );
-  await writeFileAtomic(skillPath, next);
-}
-
-function replaceSection(
-  content: string,
-  heading: string,
-  lines: string[],
-): string {
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const sectionRegex = new RegExp(
-    `(${escapedHeading}\\n\\n)([\\s\\S]*?)(?=\\n## |$)`,
-    "u",
-  );
-  const replacement = `$1${lines.join("\n")}\n`;
-  return content.match(sectionRegex)
-    ? content.replace(sectionRegex, replacement)
-    : `${content.trimEnd()}\n\n${heading}\n\n${lines.join("\n")}\n`;
-}
-
-export async function applyInstallResults(
-  rootDir: string,
-  results: SkillInstallResult[],
-): Promise<{ deferred: string[]; installed: string[] }> {
-  const skillPath = path.join(rootDir, ".ged", "SKILLS.md");
-  let content = await readFile(skillPath, "utf8");
-  const registry = parseSkillRegistry(content);
-
-  const installed: string[] = [];
-  const deferred: string[] = [];
-
-  for (const result of results) {
-    if (result.success) {
-      installed.push(result.name);
-      continue;
-    }
-
-    deferred.push(result.name);
-    const existing = registry.installed.find((s) => s.name === result.name);
-    if (existing) {
-      registry.installed = registry.installed.filter(
-        (s) => s.name !== result.name,
-      );
-      registry.deferred.push({
-        ...existing,
-        policy: "recommend-only",
-        reason: `${existing.reason} (install failed: ${result.error ?? "unknown error"})`,
-      });
-    } else {
-      registry.deferred.push({
-        name: result.name,
-        reason: `Install failed: ${result.error ?? "unknown error"}`,
-        confidence: "low",
-        policy: "recommend-only",
-      });
-    }
-  }
-
-  const installedLines =
-    registry.installed.length > 0
-      ? registry.installed.map(renderSkillDecision)
-      : ["- None yet"];
-  const deferredLines =
-    registry.deferred.length > 0
-      ? registry.deferred.map(renderSkillDecision)
-      : ["- None yet"];
-  content = replaceSection(content, "## Installed", installedLines);
-  content = replaceSection(content, "## Deferred", deferredLines);
-  await writeFileAtomic(skillPath, content);
-
-  return { deferred, installed };
 }
 
 function parseTriggers(description: string): string[] {
@@ -325,7 +165,7 @@ function maybeUserSkillDirs(): string[] {
 }
 
 export function projectSkillsDir(rootDir: string): string {
-  return path.join(rootDir, ".ged", PROJECT_SKILLS_DIRNAME);
+  return path.join(rootDir, ".agents", "skills");
 }
 
 function projectSkillStatePath(rootDir: string): string {
@@ -335,13 +175,64 @@ function projectSkillStatePath(rootDir: string): string {
 async function readProjectSkillState(
   rootDir: string,
 ): Promise<ProjectSkillState> {
+  let raw: string;
   try {
-    return JSON.parse(
-      await readFile(projectSkillStatePath(rootDir), "utf8"),
-    ) as ProjectSkillState;
-  } catch {
-    return { managed: [] };
+    raw = await readFile(projectSkillStatePath(rootDir), "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return { schemaVersion: 2, managed: [] };
+    }
+    throw error;
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Ged project skill provenance state is malformed.");
+  }
+  const state = parsed as Partial<ProjectSkillState>;
+  if (
+    (state.schemaVersion !== undefined && state.schemaVersion !== 2) ||
+    !Array.isArray(state.managed)
+  ) {
+    throw new Error("Ged project skill provenance state is unsupported.");
+  }
+  const provenanceValues = new Set([
+    "installed-copy",
+    "reusable-explicit",
+    "legacy-unverified",
+  ]);
+  const sourceValues = new Set(["bundled", "user", "created"]);
+  const managed = state.managed.map((record) => {
+    const value = record as Partial<ProjectSkillRecord>;
+    if (
+      typeof value.name !== "string" ||
+      !value.name ||
+      typeof value.source !== "string" ||
+      !sourceValues.has(value.source) ||
+      !Array.isArray(value.taskRefs) ||
+      !value.taskRefs.every((taskRef) => typeof taskRef === "string") ||
+      typeof value.installedAt !== "string" ||
+      Number.isNaN(Date.parse(value.installedAt)) ||
+      (value.provenance !== undefined &&
+        !provenanceValues.has(value.provenance)) ||
+      (value.reason !== undefined &&
+        (typeof value.reason !== "string" || !value.reason.trim())) ||
+      (value.contentHash !== undefined &&
+        !/^[a-f0-9]{64}$/u.test(value.contentHash))
+    ) {
+      throw new Error("Ged project skill provenance record is invalid.");
+    }
+    return {
+      ...(value as ProjectSkillRecord),
+      provenance: value.provenance ?? "legacy-unverified",
+    };
+  });
+  return { schemaVersion: 2, managed };
 }
 
 async function writeProjectSkillState(
@@ -353,63 +244,6 @@ async function writeProjectSkillState(
     projectSkillStatePath(rootDir),
     `${JSON.stringify(state, null, 2)}\n`,
   );
-}
-
-async function updateInstalledRegistry(
-  rootDir: string,
-  names: string[],
-): Promise<void> {
-  if (names.length === 0) {
-    return;
-  }
-  const skillPath = path.join(rootDir, ".ged", "SKILLS.md");
-  let content = await readFile(skillPath, "utf8");
-  const registry = parseSkillRegistry(content);
-  const known = new Set(registry.installed.map((item) => item.name));
-  for (const name of names) {
-    if (!known.has(name)) {
-      registry.installed.push({
-        name,
-        reason: "Auto-managed project skill dependency.",
-        confidence: "medium",
-        policy: "auto-install",
-      });
-    }
-  }
-  content = replaceSection(
-    content,
-    "## Installed",
-    registry.installed.length > 0
-      ? registry.installed.map(renderSkillDecision)
-      : ["- None yet"],
-  );
-  await writeFileAtomic(skillPath, content);
-}
-
-async function updateDeferredRegistry(
-  rootDir: string,
-  name: string,
-  reason: string,
-): Promise<void> {
-  const skillPath = path.join(rootDir, ".ged", "SKILLS.md");
-  let content = await readFile(skillPath, "utf8");
-  const registry = parseSkillRegistry(content);
-  if (!registry.deferred.some((item) => item.name === name)) {
-    registry.deferred.push({
-      name,
-      reason,
-      confidence: "low",
-      policy: "recommend-only",
-    });
-  }
-  content = replaceSection(
-    content,
-    "## Deferred",
-    registry.deferred.length > 0
-      ? registry.deferred.map(renderSkillDecision)
-      : ["- None yet"],
-  );
-  await writeFileAtomic(skillPath, content);
 }
 
 export async function loadSkillTriggers(
@@ -463,16 +297,26 @@ async function loadAvailableSkillsFromDir(
 export async function loadAvailableSkills(
   rootDir: string,
 ): Promise<AvailableSkill[]> {
-  const sources = await Promise.all([
+  const [projectSkills, ...otherSources] = await Promise.all([
     loadAvailableSkillsFromDir(projectSkillsDir(rootDir), "project"),
     loadAvailableSkillsFromDir(packageSkillsDir(), "bundled"),
     ...maybeUserSkillDirs().map((dir) =>
       loadAvailableSkillsFromDir(dir, "user"),
     ),
   ]);
+  const state = await readProjectSkillState(rootDir);
+  const managed = new Map(state.managed.map((record) => [record.name, record]));
+  const verifiedProjectSkills = projectSkills.filter((skill) => {
+    const record = managed.get(skill.name);
+    return (
+      record?.provenance === "reusable-explicit" &&
+      typeof record.contentHash === "string" &&
+      record.contentHash === hashSkillContent(skill.content)
+    );
+  });
 
   const merged = new Map<string, AvailableSkill>();
-  for (const skill of sources.flat()) {
+  for (const skill of [verifiedProjectSkills, ...otherSources].flat()) {
     if (!merged.has(skill.name)) {
       merged.set(skill.name, skill);
     }
@@ -498,132 +342,90 @@ export function matchSkillsForTask(
   );
 }
 
-function normalizeSkillName(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/gu, "-")
-      .replace(/^-+|-+$/gu, "")
-      .slice(0, 48) || "project-skill"
-  );
+const VALID_PROJECT_SKILL_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
+
+function hashSkillContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
-function taskKeywords(task: TaskBrief): string[] {
-  return Array.from(
-    new Set(
-      [task.title, task.objective, ...task.doneCriteria]
-        .join(" ")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/gu, " ")
-        .split(/\s+/u)
-        .filter((token) => token.length >= 4),
-    ),
-  ).slice(0, 6);
+function validateReusableSkill(name: string, content: string): void {
+  if (!VALID_PROJECT_SKILL_NAME.test(name) || name.includes("--")) {
+    throw new Error(
+      "Project skill names must use 1-64 lowercase letters, numbers, and single hyphens.",
+    );
+  }
+  const frontmatter = content.match(/^---\n([\s\S]*?)\n---(?:\n|$)/u)?.[1];
+  if (
+    !frontmatter ||
+    !new RegExp(`^name:\\s*['"]?${name}['"]?\\s*$`, "mu").test(frontmatter) ||
+    !/^description:\s*\S.+$/mu.test(frontmatter)
+  ) {
+    throw new Error(
+      "Reusable project skills require matching name and non-empty description frontmatter.",
+    );
+  }
 }
 
-// Strip control characters from user-supplied task fields so they can't
-// inject newlines into the YAML front-matter or markdown bullet body.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control chars from user-supplied task fields is the point.
-const SKILL_CONTROL_CHARS = /[\u0000-\u001f\u007f]/gu;
-
-// Collapse a string to a single safe line for interpolation into the
-// SKILL.md YAML front-matter. Strips control characters, removes
-// quotes/backslashes that would break the surrounding double-quoted
-// values, collapses whitespace, and trims to a sane length so a
-// pathological task title can't blow up the front-matter.
-function sanitizeYamlInline(value: string, maxLen = 200): string {
-  return value
-    .replace(SKILL_CONTROL_CHARS, " ")
-    .replace(/["\\]/gu, "")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, maxLen);
-}
-
-function yamlSingleQuoted(value: string): string {
-  return `'${value.replace(/'/gu, "''")}'`;
-}
-
-// Single-line markdown bullet content. Collapses all whitespace
-// (including newlines, since each interpolation site is a one-line
-// bullet) and refuses a literal "---" so a sanitized value can't
-// re-open YAML front-matter.
-function sanitizeMarkdownInline(value: string, maxLen = 500): string {
-  const collapsed = value
-    .replace(SKILL_CONTROL_CHARS, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, maxLen);
-  return collapsed === "---" ? "—" : collapsed;
-}
-
-function buildGeneratedSkill(task: TaskBrief, name: string): string {
-  const safeName = sanitizeYamlInline(name, 80);
-  const safeTitle = sanitizeYamlInline(task.title);
-  const safeObjective = sanitizeMarkdownInline(task.objective);
-  const safeDoneCriteria = task.doneCriteria
-    .map((item) => sanitizeMarkdownInline(item))
-    .filter((item) => item.length > 0);
-  const safeContextFiles = task.contextFiles
-    .map((item) => sanitizeYamlInline(item, 240))
-    .filter((item) => item.length > 0);
-  const keywords = taskKeywords(task)
-    .map((item) => sanitizeYamlInline(item, 40))
-    .filter((item) => item.length > 0);
-  const triggerText =
-    keywords.length > 0
-      ? keywords.map((item) => `"${item}"`).join(", ")
-      : `"${sanitizeYamlInline(task.id.toLowerCase(), 40)}"`;
-
-  return `---
-name: ${yamlSingleQuoted(safeName)}
-description: ${yamlSingleQuoted(`Project-specific skill for ${safeTitle}. Triggers include ${triggerText}`)}
----
-
-# ${safeName}
-
-Use this skill for the task "${safeTitle}".
-
-Focus:
-- ${safeObjective || "Refer to the active task brief."}
-
-Definition of done:
-${safeDoneCriteria.map((item) => `- ${item}`).join("\n") || "- Follow the task brief."}
-
-Context:
-${safeContextFiles.map((item) => `- ${item}`).join("\n") || "- Refer to the active task brief and .ged files."}
-`;
-}
-
-async function writeProjectSkill(
+export async function createReusableProjectSkill(
   rootDir: string,
   name: string,
   content: string,
-): Promise<string> {
-  const dir = path.join(projectSkillsDir(rootDir), name);
-  await mkdir(dir, { recursive: true });
-  await writeFileAtomic(path.join(dir, "SKILL.md"), content);
-  return dir;
-}
-
-async function installSkillToProject(
-  rootDir: string,
-  skill: AvailableSkill,
-): Promise<void> {
-  if (skill.source === "project") {
-    return;
+  provenance: { reason: string; source?: string },
+): Promise<{ created: boolean; path: string }> {
+  validateReusableSkill(name, content);
+  if (!provenance.reason.trim()) {
+    throw new Error("Reusable project skill provenance requires a reason.");
   }
-  await writeProjectSkill(rootDir, skill.name, skill.content);
-}
+  const skillPath = path.join(projectSkillsDir(rootDir), name, "SKILL.md");
+  await Promise.all([
+    assertSafeRepositoryWritePath(rootDir, skillPath),
+    assertSafeRepositoryWritePath(rootDir, projectSkillStatePath(rootDir)),
+  ]);
+  const state = await readProjectSkillState(rootDir);
+  let existing: string | null = null;
+  try {
+    existing = await readFile(skillPath, "utf8");
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !("code" in error) ||
+      (error as NodeJS.ErrnoException).code !== "ENOENT"
+    ) {
+      throw error;
+    }
+  }
+  if (existing !== null && existing !== content) {
+    throw new Error(
+      `Project skill ${name} already exists with different content; refusing to overwrite it.`,
+    );
+  }
 
-function syncRecordTaskRef(
-  record: ProjectSkillRecord,
-  taskId: string,
-): ProjectSkillRecord {
-  return {
-    ...record,
-    taskRefs: Array.from(new Set([...record.taskRefs, taskId])),
+  const record: ProjectSkillRecord = {
+    name,
+    source: "created",
+    sourcePath: provenance.source,
+    taskRefs: [],
+    installedAt: new Date().toISOString(),
+    reason: provenance.reason.trim(),
+    provenance: "reusable-explicit",
+    contentHash: hashSkillContent(content),
   };
+  state.managed = [
+    ...state.managed.filter((entry) => entry.name !== name),
+    record,
+  ];
+  await writeProjectSkillState(rootDir, state);
+  const created =
+    existing === null ? await publishFileExclusive(skillPath, content) : false;
+  if (!created && existing === null) {
+    const concurrentlyCreated = await readFile(skillPath, "utf8");
+    if (concurrentlyCreated !== content) {
+      throw new Error(
+        `Project skill ${name} was concurrently created with different content; provenance remains fail-closed until reconciled.`,
+      );
+    }
+  }
+  return { created, path: skillPath };
 }
 
 export async function ensureTaskSkillDependencies(
@@ -635,9 +437,6 @@ export async function ensureTaskSkillDependencies(
   created: string[];
 }> {
   const available = await loadAvailableSkills(rootDir);
-  const availableByName = new Map(
-    available.map((skill) => [skill.name, skill]),
-  );
   const matched = matchSkillsForTask(task, available);
 
   const desired = new Set<string>([
@@ -646,106 +445,10 @@ export async function ensureTaskSkillDependencies(
   ]);
   const installed: string[] = [];
   const created: string[] = [];
-  const state = await readProjectSkillState(rootDir);
-
-  if (desired.size === 0) {
-    const generatedName = normalizeSkillName(`${task.id}-${task.title}`);
-    await writeProjectSkill(
-      rootDir,
-      generatedName,
-      buildGeneratedSkill(task, generatedName),
-    );
-    desired.add(generatedName);
-    created.push(generatedName);
-    state.managed = state.managed.filter(
-      (entry) => entry.name !== generatedName,
-    );
-    state.managed.push({
-      name: generatedName,
-      source: "created",
-      taskRefs: [task.id],
-      installedAt: new Date().toISOString(),
-    });
-    await appendSkillUsageNote(
-      rootDir,
-      `Created project skill ${generatedName} for ${task.id} because no existing skill matched the task.`,
-    );
-  }
-
-  // Snapshot the iteration order: we may rename a desired entry below
-  // (when a generated skill name has to be normalized), and Set
-  // mutation during for-of can either skip the new entry or revisit
-  // entries depending on insertion order. Collect renames and apply
-  // them after the loop instead.
-  const initialDesired = [...desired];
-  const renames: Array<{ from: string; to: string }> = [];
-
-  for (const name of initialDesired) {
-    const existingRecord = state.managed.find((entry) => entry.name === name);
-    const availableSkill = availableByName.get(name);
-
-    if (availableSkill && availableSkill.source !== "project") {
-      await installSkillToProject(rootDir, availableSkill);
-      installed.push(name);
-      const nextRecord: ProjectSkillRecord = syncRecordTaskRef(
-        existingRecord ?? {
-          name,
-          source: availableSkill.source,
-          sourcePath: availableSkill.directory,
-          taskRefs: [],
-          installedAt: new Date().toISOString(),
-        },
-        task.id,
-      );
-      state.managed = state.managed.filter((entry) => entry.name !== name);
-      state.managed.push(nextRecord);
-      continue;
-    }
-
-    if (availableSkill?.source === "project" && existingRecord) {
-      state.managed = state.managed.map((entry) =>
-        entry.name === name ? syncRecordTaskRef(entry, task.id) : entry,
-      );
-      continue;
-    }
-
-    if (!availableSkill) {
-      const generatedName = normalizeSkillName(name);
-      await writeProjectSkill(
-        rootDir,
-        generatedName,
-        buildGeneratedSkill(task, generatedName),
-      );
-      if (generatedName !== name) {
-        renames.push({ from: name, to: generatedName });
-      }
-      created.push(generatedName);
-      state.managed = state.managed.filter(
-        (entry) => entry.name !== generatedName,
-      );
-      state.managed.push({
-        name: generatedName,
-        source: "created",
-        taskRefs: [task.id],
-        installedAt: new Date().toISOString(),
-      });
-      await appendSkillUsageNote(
-        rootDir,
-        `Created project skill ${generatedName} for ${task.id} because ${name} was unavailable.`,
-      );
-    }
-  }
-
-  for (const { from, to } of renames) {
-    desired.delete(from);
-    desired.add(to);
-  }
-
-  await writeProjectSkillState(rootDir, state);
-  await updateInstalledRegistry(rootDir, [
-    ...new Set([...installed, ...created, ...desired]),
-  ]);
-
+  // Matching affects only this task's declared context. Available bundled,
+  // user, and trusted project skills are already discoverable by Pi. Missing
+  // names remain visible so the coordinator can explicitly search or approve a
+  // reusable skill; task prose is never turned into a skill automatically.
   return {
     task: {
       ...task,
@@ -760,36 +463,10 @@ export async function cleanupUnusedProjectSkills(
   rootDir: string,
   activeTasks: TaskBrief[],
 ): Promise<string[]> {
-  const activeNames = new Set(activeTasks.flatMap((task) => task.skills));
-  const state = await readProjectSkillState(rootDir);
-  const removed: string[] = [];
-
-  const retained: ProjectSkillRecord[] = [];
-  for (const record of state.managed) {
-    if (activeNames.has(record.name)) {
-      retained.push(record);
-      continue;
-    }
-    removed.push(record.name);
-    await rm(path.join(projectSkillsDir(rootDir), record.name), {
-      recursive: true,
-      force: true,
-    });
-  }
-
-  if (removed.length > 0) {
-    await appendSkillUsageNote(
-      rootDir,
-      `Removed unused project skills: ${removed.join(", ")}.`,
-    );
-    await updateDeferredRegistry(
-      rootDir,
-      "project-skill-cleanup",
-      `Auto-removed unused skills: ${removed.join(", ")}`,
-    );
-  }
-
-  state.managed = retained;
-  await writeProjectSkillState(rootDir, state);
-  return removed;
+  void rootDir;
+  void activeTasks;
+  // Reusable knowledge outlives the task that first needed it. Legacy records
+  // without a verified generated-content hash are also retained rather than
+  // risking deletion of user edits.
+  return [];
 }

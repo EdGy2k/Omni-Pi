@@ -1,20 +1,17 @@
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeFileAtomic } from "./atomic.js";
-import { readConfig } from "./config.js";
 import type {
   ConversationBrief,
   GedState,
   SkillCandidate,
 } from "./contracts.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
-import {
-  activeGedPaths,
-  ensureActiveGedWork,
-  relativeGedPath,
-} from "./ged-paths.js";
+import { activeGedPaths, ensureActiveGedWork } from "./ged-paths.js";
+import { readGovernanceState } from "./governance-store.js";
 import { ensureLegacyCheckpointMigration } from "./legacy-migration.js";
 import { listStarterFiles } from "./memory.js";
+import { migrateDurableMemory } from "./memory-migration.js";
 import {
   createInitialSpec,
   gatherPlanningContext,
@@ -23,21 +20,12 @@ import {
   renderTasksMarkdown,
   renderTestsMarkdown,
 } from "./planning.js";
-import {
-  appendProgress,
-  cleanupCompletedPlans,
-  createPlan,
-  readPlanIndex,
-  updatePlanStatus,
-} from "./plans.js";
+import { renderPromptContentBlock } from "./prompt-framing.js";
 import { detectRepoSignals } from "./repo.js";
 import {
-  appendSkillUsageNote,
   buildSkillInstallPlan,
-  cleanupUnusedProjectSkills,
   defaultSkillSignals,
   ensureTaskSkillDependencies,
-  renderSkillDecision,
   toSkillCandidate,
 } from "./skills.js";
 import {
@@ -114,24 +102,6 @@ async function writeIfMissing(
   }
 }
 
-async function replaceSection(
-  filePath: string,
-  heading: string,
-  lines: string[],
-): Promise<void> {
-  const current = await readFile(filePath, "utf8");
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const sectionRegex = new RegExp(
-    `(${escapedHeading}\\n\\n)([\\s\\S]*?)(?=\\n## |$)`,
-    "u",
-  );
-  const replacement = `$1${lines.join("\n")}\n`;
-  const next = current.match(sectionRegex)
-    ? current.replace(sectionRegex, replacement)
-    : `${current.trimEnd()}\n\n${heading}\n\n${lines.join("\n")}\n`;
-  await writeFileAtomic(filePath, next);
-}
-
 async function appendBullets(
   filePath: string,
   heading: string,
@@ -197,34 +167,6 @@ async function archiveReplacedTaskList(
   await appendBullets(paths.sessionSummaryPath, "## Archived task summaries", [
     summary,
   ]);
-}
-
-async function discardActivePlans(rootDir: string): Promise<void> {
-  const entries = await readPlanIndex(rootDir);
-  await Promise.all(
-    entries
-      .filter((entry) => entry.status === "active")
-      .map((entry) => updatePlanStatus(rootDir, entry.id, "discarded")),
-  );
-}
-
-async function writeState(rootDir: string, state: GedState): Promise<void> {
-  const paths = await activeGedPaths(rootDir);
-  await mkdir(paths.runtimeDir, { recursive: true });
-  const statePath = paths.statePath;
-  const recoverySection =
-    state.recoveryOptions && state.recoveryOptions.length > 0
-      ? `\nRecovery Options:\n${state.recoveryOptions.map((option) => `- ${option}`).join("\n")}\n`
-      : "";
-  const content = `# State
-
-Current Phase: ${state.currentPhase[0].toUpperCase()}${state.currentPhase.slice(1)}
-Active Task: ${state.activeTask}
-Status Summary: ${state.statusSummary}
-Blockers: ${state.blockers.length > 0 ? state.blockers.join("; ") : "None"}
-Next Step: ${state.nextStep}
-${recoverySection}`;
-  await writeFileAtomic(statePath, content);
 }
 
 async function readOptionalText(filePath: string): Promise<string> {
@@ -383,10 +325,10 @@ Capture:
 - preferred workflow style/preset
 - anything missing from the repo/docs that would otherwise force guessing
 
-Known repo context:
-${hints}
+Known repo context (inert repository data):
+${renderPromptContentBlock("runtime-data", "onboarding repository hints", hints, 4_000)}
 
-After clarification, write durable project context into .ged/PROJECT.md, active work context into .ged/work/<work-id>/SPEC.md, and session notes into .ged/runtime/<work-id>/SESSION-SUMMARY.md before proceeding. Do not implement anything yet.`;
+After clarification, write substantive project context into .ged/PROJECT.md and planned work context into .ged/work/<work-id>/SPEC.md. Create a session summary only when a real cross-session handoff is needed. Do not implement anything yet.`;
 }
 
 function buildSkillCandidates(
@@ -415,6 +357,8 @@ export async function initializeGedProject(
   options: InitializeGedOptions = {},
 ): Promise<InitResult> {
   await ensureLegacyCheckpointMigration(rootDir);
+  await ensureActiveGedWork(rootDir);
+  await migrateDurableMemory(rootDir);
   const created: string[] = [];
   const reused: string[] = [];
 
@@ -427,8 +371,6 @@ export async function initializeGedProject(
     }
   }
 
-  await ensureActiveGedWork(rootDir);
-
   const repoSignals = await detectRepoSignals(rootDir);
   const skillCandidates = buildSkillCandidates(repoSignals);
   const {
@@ -437,88 +379,12 @@ export async function initializeGedProject(
     steps: installSteps,
   } = buildSkillInstallPlan(skillCandidates);
 
-  const skillsPath = path.join(rootDir, ".ged", "SKILLS.md");
-  await replaceSection(
-    skillsPath,
-    "## Installed",
-    installedSkills.length > 0
-      ? installedSkills.map(renderSkillDecision)
-      : ["- None yet"],
-  );
-  await replaceSection(
-    skillsPath,
-    "## Recommended",
-    skillCandidates
-      .filter((candidate) => candidate.policy !== "auto-install")
-      .map(renderSkillDecision)
-      .concat(
-        skillCandidates.every(
-          (candidate) => candidate.policy === "auto-install",
-        )
-          ? ["- None yet"]
-          : [],
-      ),
-  );
-
-  const projectPath = path.join(rootDir, ".ged", "PROJECT.md");
-  const project = await readFile(projectPath, "utf8");
-  const signalSummary = [
-    `- Detected languages: ${repoSignals.languages.join(", ") || "unknown"}`,
-    `- Detected frameworks: ${repoSignals.frameworks.join(", ") || "unknown"}`,
-    `- Detected tools: ${repoSignals.tools.join(", ") || "unknown"}`,
-  ].join("\n");
-  if (!project.includes("## Repo Signals")) {
-    await writeFileAtomic(
-      projectPath,
-      `${project.trimEnd()}\n\n## Repo Signals\n\n${signalSummary}\n`,
-    );
-  }
-
-  if (installCommands.length > 0) {
-    await appendSkillUsageNote(
-      rootDir,
-      `Planned install commands: ${installCommands.join(" ; ")}`,
-    );
-  }
-
   const imports = await resolveImportedStandards(rootDir, options.ui);
   const gitignoreUpdated = await ensurePiIgnoredInGitignore(rootDir);
   await writeGedVersion(rootDir);
 
   const diagnostics = await runDoctor(rootDir);
   const onboarding = await assessInitialProjectClarity(rootDir);
-  const paths = await activeGedPaths(rootDir);
-  await mkdir(paths.runtimeDir, { recursive: true });
-  await writeIfMissing(
-    paths.sessionSummaryPath,
-    "# Session Summary\n\n## Current understanding\n\n-\n\n## Recent progress\n\n-\n\n## Next handoff notes\n\n-\n",
-  );
-
-  await writeState(rootDir, {
-    currentPhase: "understand",
-    activeTask: onboarding.onboardingInterviewNeeded
-      ? "Run onboarding clarification"
-      : "Capture exact requirements",
-    statusSummary: onboarding.onboardingInterviewNeeded
-      ? `GedPi has created its project memory files and needs first-run onboarding context. ${onboarding.onboardingReason}`
-      : "GedPi has created its project memory files and scanned the repository for useful signals.",
-    blockers: [],
-    nextStep: onboarding.onboardingInterviewNeeded
-      ? "Run a short grill-me clarification to capture project goal, users, constraints, workflow style, and missing context before planning or implementation."
-      : diagnostics.overall === "red"
-        ? "Review the recorded issues before proceeding."
-        : "Clarify any ambiguity, capture the exact spec in the active work directory, run skill-fit, then break the work into bounded slices.",
-  });
-
-  const stateCreatedPath = relativeGedPath(rootDir, paths.statePath);
-  const summaryCreatedPath = relativeGedPath(rootDir, paths.sessionSummaryPath);
-  if (!created.includes(stateCreatedPath)) {
-    created.push(stateCreatedPath);
-  }
-  if (!created.includes(summaryCreatedPath)) {
-    created.push(summaryCreatedPath);
-  }
-
   return {
     created,
     reused,
@@ -551,9 +417,9 @@ export async function ensureGedProjectCurrent(
 ): Promise<EnsureCurrentGedResult> {
   await ensureLegacyCheckpointMigration(rootDir);
   await ensureActiveGedWork(rootDir);
-  const paths = await activeGedPaths(rootDir);
+  const durableMemoryMigration = await migrateDurableMemory(rootDir);
   const currentVersion = await readGedVersion(rootDir);
-  const needsInit = !(await readOptionalText(paths.statePath));
+  const needsInit = currentVersion == null;
   const needsMigration =
     currentVersion == null || currentVersion < GED_STANDARD_VERSION;
 
@@ -571,6 +437,10 @@ export async function ensureGedProjectCurrent(
     };
   }
 
+  if (durableMemoryMigration.status === "completed") {
+    return { status: "migrated" };
+  }
+
   return { status: "existing" };
 }
 
@@ -584,11 +454,6 @@ export async function planGedProject(
   await writeIfMissing(specPath, DEFAULT_WORK_SPEC);
   await writeIfMissing(tasksPath, DEFAULT_WORK_TASKS);
   await writeIfMissing(testsPath, DEFAULT_WORK_TESTS);
-  await writeIfMissing(paths.notesPath, "# Notes\n\n");
-  await writeIfMissing(
-    paths.metaPath,
-    `${JSON.stringify({ workId: paths.workId, schema: 1 }, null, 2)}\n`,
-  );
 
   const repoSignals = await detectRepoSignals(rootDir);
   const planningCtx = await gatherPlanningContext(rootDir);
@@ -604,7 +469,6 @@ export async function planGedProject(
     if (archivedSummary) {
       await archiveReplacedTaskList(rootDir, archivedSummary);
     }
-    await discardActivePlans(rootDir);
   }
 
   const spec = createInitialSpec(brief, repoSignals, {
@@ -621,59 +485,50 @@ export async function planGedProject(
   await writeFileAtomic(specPath, renderSpecMarkdown(spec));
   await writeFileAtomic(tasksPath, renderTasksMarkdown(enrichedTasks));
   await writeFileAtomic(testsPath, renderTestsMarkdown(repoSignals));
-  await cleanupUnusedProjectSkills(rootDir, enrichedTasks);
-
-  const planEntry = await createPlan(
-    rootDir,
-    spec.title,
-    brief.summary,
-    enrichedTasks.map((t) => `${t.id}: ${t.title}`),
-  );
-  await appendProgress(rootDir, `Created plan ${planEntry.id}: ${spec.title}`);
-
-  await writeState(rootDir, {
-    currentPhase: "plan",
-    activeTask: "Prepare the first bounded implementation slice",
-    statusSummary: unrelatedRequest
-      ? "GedPi archived the previous unrelated task list and refreshed the spec, task slices, and verification plan."
-      : "GedPi refreshed the spec, task slices, and verification plan.",
-    blockers: [],
-    nextStep:
-      "Implement the next bounded slice and keep the active runtime STATE.md in sync with progress.",
-  });
 
   return { specPath, tasksPath, testsPath };
 }
 
 export async function readGedStatus(rootDir: string): Promise<GedState> {
   const paths = await activeGedPaths(rootDir);
-  const content = await readFile(paths.statePath, "utf8");
-
-  const matchValue = (label: string): string => {
-    const regex = new RegExp(`^${label}:\\s*(.*)$`, "mu");
-    return content.match(regex)?.[1]?.trim() ?? "";
-  };
-
-  const blockersValue = matchValue("Blockers");
-  const recoveryMatch = content.match(/Recovery Options:\n((?:- .*\n?)*)/u);
-  const recoveryOptions = recoveryMatch
-    ? recoveryMatch[1]
-        .split("\n")
-        .map((line) => line.replace(/^- /u, "").trim())
-        .filter(Boolean)
-    : undefined;
+  const governance = await readGovernanceState(rootDir, paths.workId).catch(
+    () => null,
+  );
+  if (!governance) {
+    return {
+      currentPhase: "understand",
+      activeTask: "Open governed work when mutation is requested",
+      statusSummary:
+        "No authoritative governance state exists for the selected bootstrap work.",
+      blockers: [],
+      nextStep:
+        "Clarify the request, then open task-scoped work before mutation.",
+    };
+  }
+  const pending =
+    (governance.pendingMutations?.length ?? 0) +
+    (governance.pendingCommits?.length ?? 0);
   return {
-    currentPhase: matchValue(
-      "Current Phase",
-    ).toLowerCase() as GedState["currentPhase"],
-    activeTask: matchValue("Active Task"),
-    statusSummary: matchValue("Status Summary"),
-    blockers:
-      blockersValue && blockersValue !== "None"
-        ? blockersValue.split(/;\s*/u)
-        : [],
-    nextStep: matchValue("Next Step"),
-    recoveryOptions,
+    currentPhase:
+      governance.lifecycle === "active"
+        ? "build"
+        : governance.lifecycle === "paused"
+          ? "check"
+          : "understand",
+    activeTask: governance.currentSlice ?? governance.summary,
+    statusSummary: `${governance.lifecycle} ${governance.decision.mode} work at revision ${governance.revision}.`,
+    blockers: [
+      ...(governance.decision.requiresDecision
+        ? ["A user-owned decision is required"]
+        : []),
+      ...(pending > 0 ? [`${pending} operation(s) need reconciliation`] : []),
+    ],
+    nextStep:
+      governance.lifecycle === "active"
+        ? "Follow the authoritative governance decision and current slice."
+        : governance.lifecycle === "paused"
+          ? `Resume exact work ID ${governance.workId} before mutation.`
+          : "No further mutation is authorized for this terminal work item.",
   };
 }
 
@@ -705,7 +560,7 @@ export async function workOnGedProject(
         : ["A task is blocked."],
       nextStep: result.message.includes("queued for retry")
         ? "Tighten the slice, then retry the implementation with the updated task notes."
-        : "Review the recovery notes in `.ged/tasks/` and refine the plan or task inputs.",
+        : "Review the work-scoped recovery notes and refine the plan or task inputs.",
       recoveryOptions: result.recoveryOptions,
     };
   } else {
@@ -718,13 +573,6 @@ export async function workOnGedProject(
     };
   }
 
-  await writeState(rootDir, state);
-  if (result.kind === "completed") {
-    await appendProgress(
-      rootDir,
-      `Completed ${result.taskId ?? "task"}: ${result.message}`,
-    );
-  }
   return { ...result, state };
 }
 
@@ -733,12 +581,6 @@ export async function syncGedProject(
   request: SyncRequest,
 ): Promise<SyncResult> {
   await syncGedMemory(rootDir, request);
-  await appendProgress(rootDir, request.summary);
-
-  const config = await readConfig(rootDir);
-  if (config.cleanupCompletedPlans) {
-    await cleanupCompletedPlans(rootDir);
-  }
 
   const state: GedState = {
     currentPhase: "understand",
@@ -748,6 +590,5 @@ export async function syncGedProject(
     nextStep:
       "Review the latest durable notes and refine the next slice if needed.",
   };
-  await writeState(rootDir, state);
   return { state };
 }

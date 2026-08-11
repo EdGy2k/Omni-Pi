@@ -1,10 +1,10 @@
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { readConfig } from "./config.js";
-import { GED_DIR } from "./contracts.js";
-import { activeGedPaths } from "./ged-paths.js";
+import { taskArtifactDir } from "./durable-memory.js";
+import { activeGedPaths, readWorkItemMeta } from "./ged-paths.js";
 import { detectRepoSignals } from "./repo.js";
+import { GED_STANDARD_VERSION, readGedVersion } from "./standards.js";
 import { readTasks } from "./tasks.js";
 
 export type HealthLevel = "green" | "yellow" | "red";
@@ -20,54 +20,27 @@ export interface DoctorReport {
   checks: DiagnosticResult[];
 }
 
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function checkGedInitialized(rootDir: string): Promise<DiagnosticResult> {
-  let stateExists = false;
   try {
+    const version = await readGedVersion(rootDir);
     const paths = await activeGedPaths(rootDir);
-    stateExists = await fileExists(paths.statePath);
+    await readWorkItemMeta(rootDir, paths.workId);
+    if (version !== GED_STANDARD_VERSION) {
+      return {
+        name: "ged-init",
+        level: "red",
+        message: `Ged memory version ${version ?? "missing"} needs migration to ${GED_STANDARD_VERSION}.`,
+      };
+    }
   } catch {
-    stateExists = false;
-  }
-  if (!stateExists) {
     return {
       name: "ged-init",
       level: "red",
       message:
-        "Active Ged runtime state not found. Run /ged-init to initialize the project.",
+        "Ged version or bootstrap work identity not found. Run /ged-init to initialize the project.",
     };
   }
   return { name: "ged-init", level: "green", message: "GedPi initialized." };
-}
-
-async function checkConfigParseable(
-  rootDir: string,
-): Promise<DiagnosticResult> {
-  try {
-    const config = await readConfig(rootDir);
-    if (!config.models.brain) {
-      return {
-        name: "config",
-        level: "yellow",
-        message: "Model for brain is empty in CONFIG.md.",
-      };
-    }
-    return { name: "config", level: "green", message: "Config is valid." };
-  } catch {
-    return {
-      name: "config",
-      level: "yellow",
-      message: "CONFIG.md could not be parsed. Using defaults.",
-    };
-  }
 }
 
 async function checkRepoSignals(rootDir: string): Promise<DiagnosticResult> {
@@ -129,7 +102,6 @@ export interface StuckSignal {
 }
 
 export async function detectStuck(rootDir: string): Promise<StuckSignal> {
-  const taskDir = path.join(rootDir, GED_DIR, "tasks");
   try {
     const paths = await activeGedPaths(rootDir);
     const tasks = await readTasks(paths.tasksPath);
@@ -142,7 +114,10 @@ export async function detectStuck(rootDir: string): Promise<StuckSignal> {
 
     const candidate = inProgressOrTodo[0];
     try {
-      const historyPath = path.join(taskDir, `${candidate.id}.history.json`);
+      const historyPath = path.join(
+        taskArtifactDir(rootDir, paths.workId, candidate.id),
+        "HISTORY.json",
+      );
       const raw = await readFile(historyPath, "utf8");
       const history = JSON.parse(raw) as Array<{
         verification: { passed: boolean; failureSummary: string[] };
@@ -191,7 +166,6 @@ function worstLevel(checks: DiagnosticResult[]): HealthLevel {
 export async function runDoctor(rootDir: string): Promise<DoctorReport> {
   const checks = await Promise.all([
     checkGedInitialized(rootDir),
-    checkConfigParseable(rootDir),
     checkRepoSignals(rootDir),
     checkOrphanedTasks(rootDir),
   ]);

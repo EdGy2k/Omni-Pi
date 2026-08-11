@@ -49,6 +49,26 @@
 - Split native child-supervisor coordination from opt-in external peer
   messaging. Peer sends are limited to verified facts/dependency updates for an
   exact user-directed target and remain non-authorizing.
+- Simplified durable memory with schema v3. Fresh projects now create only
+  required machine metadata; direct and planned work receive mode-specific
+  artifacts; task briefs, histories, and recovery notes are isolated by work
+  ID; PROJECT, read-only reports, CONTEXT, ADRs, and handoff projections are
+  created only for substantive content.
+- Replaced task-paraphrase skill generation and task-close deletion with
+  explicit provenance-bound reusable skills under Pi-native
+  `.agents/skills/`. Missing skills no longer create files automatically.
+- Added idempotent, byte-exact migration from legacy glossary/decision/global
+  task layouts, preserving ambiguous or edited content instead of guessing or
+  deleting it. Migration now uses token-specific process locks, pre-mutation
+  crash journals, structural evidence validation, and symlink-safe source and
+  destination checks. Human STATE/session Markdown is now lazy and
+  non-authoritative.
+- Added the governed `ged_memory` tool for substantive PROJECT, report,
+  CONTEXT, ADR, and handoff creation. Removed obsolete global config/plan/live
+  checkpoint APIs, task skill registries, and packaged placeholder templates.
+- Separated approved imported instructions from durable/runtime data in brain
+  prompts using collision-safe content frames, and bound standards approval to
+  exact source hashes so changed bytes require renewed approval.
 
 ### Dependencies
 

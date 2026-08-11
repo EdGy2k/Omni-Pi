@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -34,17 +34,20 @@ export async function gatherPlanningContext(
   };
 
   try {
-    const decisions = await readFile(
-      path.join(rootDir, ".ged", "DECISIONS.md"),
-      "utf8",
+    const adrDir = path.join(rootDir, "docs", "adr");
+    const adrFiles = (await readdir(adrDir))
+      .filter((file) => file.endsWith(".md"))
+      .sort();
+    const decisions = await Promise.all(
+      adrFiles.map((file) => readFile(path.join(adrDir, file), "utf8")),
     );
     ctx.existingDecisions = decisions
-      .split("\n")
+      .flatMap((decision) => decision.split("\n"))
       .filter((line) => line.trim().startsWith("- Decision:"))
       .map((line) => line.replace(/^.*- Decision:\s*/u, "").trim())
       .filter(Boolean);
   } catch {
-    /* no decisions file yet */
+    /* no ADR directory yet */
   }
 
   const paths = await activeGedPaths(rootDir);
@@ -111,7 +114,7 @@ function buildBootstrapTasks(repoSignals: RepoSignals): TaskBrief[] {
         "Refine the requested behavior, constraints, and success criteria into an implementation-ready spec.",
       contextFiles: [
         ".ged/PROJECT.md",
-        ".ged/IDEAS.md",
+        "CONTEXT.md",
         ".ged/work/<work-id>/SPEC.md",
       ],
       skills: ["ged-planning", "brainstorming"],
@@ -298,7 +301,7 @@ export function createInitialSpec(
   }
 
   const architecture = [
-    "Use `.ged/` as the durable project memory layer.",
+    "Use task-scoped `.ged/` work state plus substantive PROJECT/CONTEXT/ADR durable memory.",
     "Keep one friendly user-facing brain that clarifies ambiguity first, plans privately, and only then edits code.",
     `Detected repo signals: languages=${repoSignals.languages.join(", ") || "unknown"}; frameworks=${repoSignals.frameworks.join(", ") || "unknown"}; tools=${repoSignals.tools.join(", ") || "unknown"}.`,
   ];

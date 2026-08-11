@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { TaskBrief } from "./contracts.js";
+import { taskArtifactDir } from "./durable-memory.js";
 import { activeGedPaths } from "./ged-paths.js";
 import { parseTaskRow } from "./tasks.js";
 
@@ -74,11 +75,10 @@ export async function readModifiedFilesFromHistory(
   taskId: string,
 ): Promise<string[]> {
   try {
+    const paths = await activeGedPaths(rootDir);
     const historyPath = path.join(
-      rootDir,
-      ".ged",
-      "tasks",
-      `${taskId}.history.json`,
+      taskArtifactDir(rootDir, paths.workId, taskId),
+      "HISTORY.json",
     );
     const history = JSON.parse(await readFile(historyPath, "utf8")) as Array<{
       modifiedFiles?: string[];

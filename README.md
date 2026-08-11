@@ -11,8 +11,10 @@ Requires Node.js 22 or newer.
 ## What It Does
 
 - Starts with the full Ged workflow always active — the agent clarifies, runs skill-fit, plans, implements, and verifies in bounded slices.
-- Keeps durable standards and project context in `.ged/`.
-- Writes specs, tasks, and progress into `.ged/` and tracks workflow state across sessions.
+- Keeps approved standards and concise project facts durable without generating
+  placeholder documents.
+- Scopes specs, tasks, verification, attempt history, and recovery evidence by
+  immutable work ID while authoritative runtime state stays machine-readable.
 - Adds a repo map that indexes supported source files, ranks them by structure plus recent activity, and injects a compact codebase-awareness block into Ged prompts.
 - Bundles web search, native micro-UI via Glimpse, native git diff review, prompt-template-powered workflow commands, and automatic updates out of the box.
 - Documents a [main-owned intelligence orchestration](docs/single-writer-intelligence-orchestration.md) model: keep the Ged brain as decision owner while using explorer, planner, reviewer, verifier, and optional worker subagents for additional throughput.
@@ -42,7 +44,8 @@ GedPi ships skills that power the Ged workflow and skill-discovery stack:
 - `ged-verification` — post-implementation checks and state updates
 - `ged-escalation` — automatic escalation when a slice repeatedly fails
 - `find-skills` — discovering relevant skills from registries and repos
-- `skill-creator` — creating project-specific skills when nothing suitable exists
+- `skill-creator` — creating reusable project-specific skills only when a real
+  capability gap warrants durable knowledge
 - `brainstorming` — structured planning and task creation flows
 
 ### Repo Map
@@ -116,6 +119,12 @@ evidence, then stores the authoritative decision in
 `.ged/runtime/<work-id>/governance.json`. A fresh request must explicitly open or
 continue the exact work item before mutation.
 
+The governed `ged_memory` tool creates substantive PROJECT summaries,
+read-only reports, root CONTEXT, ADRs, and explicit handoff projections only
+when needed. `ged_skill` separately creates reusable Pi-native project skills
+with durable reason and content-hash provenance; neither tool turns Markdown
+into authority.
+
 Planned-change work may write its active `SPEC.md`, `TASKS.md`, and `TESTS.md`
 before acceptance. Source mutation requires role-neutral accepted-plan evidence
 bound to the exact plan bytes. The runtime snapshots known and unknown
@@ -128,9 +137,12 @@ auditable reason and timestamp; terminal work never reopens.
 
 On the first agent turn GedPi also:
 
-- lazily initializes or migrates `.ged/`;
+- initializes only required machine metadata and lazily creates substantive
+  human artifacts;
 - preserves legacy branch/root checkpoint data in ignored byte-exact backups,
   never as authorization;
+- migrates substantive legacy glossary and decision content to root
+  `CONTEXT.md` and sparse `docs/adr/` records while retaining ambiguous data;
 - discovers external project standards and asks whether to retain them;
 - maintains a compact runtime repo map under ignored `.pi/` state;
 - runs skill-fit and installs/creates project skills only for real reusable
@@ -183,57 +195,49 @@ outside Pi remain outside this boundary.
 
 ## Durable Memory
 
-GedPi uses a three-tier memory architecture under `.ged/`. All memory is project-scoped and human-readable markdown.
+GedPi's memory is lazy and current-state oriented. Fresh initialization creates
+only `.ged/VERSION`, `.ged/.gitignore`, standards-import metadata, an ignored
+session pointer, and bootstrap `META.json`. It does **not** create placeholder
+project, planning, progress, status, handoff, or skill files.
 
-### Root — durable project context
+Substantive project knowledge has one canonical destination:
 
-These files describe the project as it is now. They evolve slowly and persist across branches.
+- `.ged/PROJECT.md` — concise agent-oriented goal, users, constraints, and
+  success criteria, created on the first real write;
+- root `CONTEXT.md` — canonical project/domain vocabulary;
+- `docs/adr/*.md` — sparse decisions for meaningful trade-offs;
+- `.ged/STANDARDS.md` — explicitly approved, content-hash-bound repository
+  instructions;
+- `.agents/skills/<name>/SKILL.md` — explicit reusable project skills using
+  Pi's native trusted-project discovery. Ged records provenance lazily in
+  `.ged/SKILLS-STATE.json` and never deletes a skill because a task closed.
 
-```
-.ged/
-├── PROJECT.md          goal, users, constraints, success criteria
-├── ARCHITECTURE.md     component boundaries and system shape
-├── PATTERNS.md         implementation conventions
-├── GLOSSARY.md         project/domain vocabulary
-├── DECISIONS.md        durable decisions and rationale
-├── STANDARDS.md        imported repo-wide agent standards
-├── SKILLS.md           skill inventory and recommendations
-├── CONFIG.md           Ged configuration
-└── VERSION             memory schema version
-```
+Work artifacts are proportional to mode and scoped by immutable work ID:
 
-### Work — active implementation contracts
-
-Scoped per work item under `.ged/work/<work-id>/`. Work IDs combine a readable
-summary slug, sortable timestamp, and cryptographic entropy; Git branch names
-are metadata only. Each Pi session keeps an ignored active-work pointer, and
-each new agent request must explicitly open or continue work before mutation.
-
-```
+```text
 .ged/work/<work-id>/
-├── SPEC.md             current work-item contract
-├── TASKS.md            bounded implementation slices
-├── TESTS.md            verification plan and evidence
-├── NOTES.md            handoff notes local to this work
-└── META.json           machine-readable work metadata
+├── META.json                  immutable machine identity (all mutating work)
+├── DIRECT.md                  concise scope/check record (direct-change only)
+├── SPEC.md                    ┐
+├── TASKS.md                   ├ planned-change only
+├── TESTS.md                   ┘
+└── tasks/<task-id>/
+    ├── BRIEF.md
+    ├── HISTORY.json
+    └── RECOVERY.md
 ```
 
-### Runtime — authoritative machine state
+Repeated task IDs such as `T01` cannot collide across work items. Read-only work
+opens no mutating work; an optional report is created only when there is
+substantive report content.
 
-Per work item, runtime state is ignored and machine-owned. Markdown files are
-projections/handoff notes only; guards read `governance.json`.
-
-```
-.ged/runtime/<work-id>/
-├── governance.json     authoritative decision, lifecycle, evidence, revision
-├── STATE.md            regenerable human-readable projection
-└── SESSION-SUMMARY.md  optional handoff notes
-```
-
-Session-scoped selection pointers live under
-`.ged/runtime/active-work/<session-key>.json`. Legacy `checkpoints.json` records
-are discovered only by the migration compatibility path, copied to an immutable
-ignored backup, and never selected or trusted as current authority.
+`.ged/runtime/<work-id>/governance.json` remains the sole machine authority.
+`STATE.md` and `SESSION-SUMMARY.md` are optional, explicit status/handoff
+projections and are never parsed back into guards. Session pointers live under
+`.ged/runtime/active-work/`; legacy checkpoints and v2 memory receive byte-exact
+ignored backups plus idempotent migration metadata. See
+[the artifact contract](docs/durable-memory-artifacts.md) for every producer,
+consumer, authority level, lifecycle, and migration rule.
 
 ## Development
 

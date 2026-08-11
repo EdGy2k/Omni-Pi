@@ -19,7 +19,6 @@ import {
 } from "./governance-store.js";
 import { withProcessQueue } from "./serial-queue.js";
 import {
-  DEFAULT_WORK_NOTES,
   DEFAULT_WORK_SPEC,
   DEFAULT_WORK_TASKS,
   DEFAULT_WORK_TESTS,
@@ -1292,7 +1291,6 @@ async function verifyImportedTarget(
     [paths.specPath, DEFAULT_WORK_SPEC],
     [paths.tasksPath, DEFAULT_WORK_TASKS],
     [paths.testsPath, DEFAULT_WORK_TESTS],
-    [paths.notesPath, DEFAULT_WORK_NOTES],
     [paths.metaPath, expectedMeta],
   ]);
   for (const [filePath, expected] of expectedWorkFiles) {
@@ -1305,7 +1303,12 @@ async function verifyImportedTarget(
       );
     }
   }
-  if (await readRegularFile(rootDir, paths.checkpointsPath)) {
+  if (
+    await readRegularFile(
+      rootDir,
+      path.join(paths.runtimeDir, "checkpoints.json"),
+    )
+  ) {
     throw new LegacyMigrationError(
       "Imported legacy work must not contain an authorizing legacy checkpoint.",
       "integrity-failure",
@@ -1400,7 +1403,6 @@ async function createImportedTarget(
     publishExact(rootDir, paths.specPath, DEFAULT_WORK_SPEC),
     publishExact(rootDir, paths.tasksPath, DEFAULT_WORK_TASKS),
     publishExact(rootDir, paths.testsPath, DEFAULT_WORK_TESTS),
-    publishExact(rootDir, paths.notesPath, DEFAULT_WORK_NOTES),
   ]);
   await publishExact(
     rootDir,
@@ -1453,6 +1455,9 @@ async function createImportedTarget(
       },
       new Date(plan.createdAt),
     );
+    // Legacy import is an explicit recovery handoff, so it opts into the
+    // otherwise-lazy human projection after authoritative state is durable.
+    await regenerateGovernanceProjection(rootDir, plan.targetWorkId);
   } catch (error) {
     if (
       !(error instanceof GovernanceStoreError) ||
@@ -1545,7 +1550,6 @@ async function resumeMigration(
   options: LegacyMigrationOptions,
 ): Promise<LegacyMigrationResult> {
   const paths = legacyMigrationPaths(rootDir);
-  await verifyCurrentLegacyInventory(rootDir, plan);
   let phases = await verifyJournalPrefix(rootDir, plan);
   if (phases.complete) {
     await verifyBackup(rootDir, plan);
@@ -1562,6 +1566,11 @@ async function resumeMigration(
       reason: plan.importDecision.reason,
     };
   }
+  // Once the immutable completion marker exists, the byte-exact backup and
+  // imported target are the recovery contract. Later durable-memory schema
+  // migrations may legitimately relocate or remove the original legacy source
+  // files, so source inventory is checked only while this migration is active.
+  await verifyCurrentLegacyInventory(rootDir, plan);
 
   if (!phases.backup) {
     await backUpSources(rootDir, plan, options);

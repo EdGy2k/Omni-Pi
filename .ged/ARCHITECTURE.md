@@ -15,13 +15,16 @@
   fail-closed workflowScript analysis, durable checkout writer ownership,
   generated staffing policy, and inherited read-only Smart Worker fanout
   ceilings.
-- `src/vendor/shared-checkpoints.js`: non-authorizing legacy checkpoint
-  compatibility only.
+- `src/legacy-migration.ts`: non-authorizing, byte-exact import/quarantine for
+  historical checkpoint layouts; no live checkpoint API remains.
 - `src/agent-settings.ts` + `src/commands.ts`: capability/model bindings,
   adaptive GPT-5.6 setup/diagnostics, channel settings, and runtime agent
   generation.
 - `src/workflow.ts`, `src/work.ts`, `src/skills.ts`, `src/templates.ts`: durable
   memory, task artifacts, and project skill lifecycle.
+- `src/durable-memory.ts` and `src/memory-migration.ts`: lazy substantive
+  artifact creation, ownership inventory, work-scoped task paths, and
+  idempotent v3 preservation/migration.
 - `pi-subagents`: optional child runtime; `pi-intercom`: optional independent
   session messaging. Native child-supervisor messaging is owned by
   `pi-subagents`.

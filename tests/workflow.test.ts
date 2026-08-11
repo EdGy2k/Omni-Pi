@@ -1,9 +1,8 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, test } from "vitest";
-import { readConfig, writeConfig } from "../src/config.js";
 import {
   consumeBudget,
   createBudget,
@@ -16,6 +15,10 @@ import {
 } from "../src/context.js";
 import { detectPreset } from "../src/contracts.js";
 import { detectStuck, renderDoctorReport, runDoctor } from "../src/doctor.js";
+import {
+  createProjectSummary,
+  taskArtifactDir,
+} from "../src/durable-memory.js";
 import { activeGedPaths, relativeGedPath } from "../src/ged-paths.js";
 import {
   buildBranchName,
@@ -25,22 +28,10 @@ import {
 } from "../src/git.js";
 import { gatherPlanningContext, renderTasksMarkdown } from "../src/planning.js";
 import {
-  appendProgress,
-  cleanupCompletedPlans,
-  createPlan,
-  readPlanIndex,
-  readProgress,
-  renderPlanIndex,
-  updatePlanStatus,
-} from "../src/plans.js";
-import {
-  applyInstallResults,
   cleanupUnusedProjectSkills,
   ensureTaskSkillDependencies,
   loadSkillTriggers,
   matchSkillsForTask,
-  projectSkillsDir,
-  readSkillRegistry,
 } from "../src/skills.js";
 import { renderCompactStatus, renderPlainStatus } from "../src/status.js";
 import {
@@ -62,38 +53,45 @@ async function createTempProject(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+async function listFiles(
+  rootDir: string,
+  directory = rootDir,
+): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory())
+      files.push(...(await listFiles(rootDir, absolute)));
+    else files.push(path.relative(rootDir, absolute).split(path.sep).join("/"));
+  }
+  return files.sort();
+}
+
 describe("Ged workflow", () => {
-  test("initializeGedProject creates starter files and recommends skills", async () => {
+  test("initializeGedProject creates only machine metadata and recommends skills", async () => {
     const rootDir = await createTempProject("ged-init-");
 
     const result = await initializeGedProject(rootDir);
     const paths = await activeGedPaths(rootDir);
 
     expect(result.created).toContain(".ged/VERSION");
-    expect(result.created).toContain(".ged/PROJECT.md");
-    expect(result.created).toContain(relativeGedPath(rootDir, paths.statePath));
-    expect(result.created).toContain(".pi/agents/ged-brain.md");
+    const gedFiles = (await listFiles(path.join(rootDir, ".ged"))).map(
+      (file) => `.ged/${file}`,
+    );
+    expect(gedFiles).toEqual([
+      ".ged/.gitignore",
+      ".ged/IMPORT-STATE.json",
+      ".ged/VERSION",
+      expect.stringMatching(
+        /^\.ged\/runtime\/active-work\/[a-f0-9]{32}\.json$/u,
+      ),
+      `.ged/work/${paths.workId}/META.json`,
+    ]);
     expect(
       result.skillCandidates.some(
         (candidate) => candidate.name === "find-skills",
       ),
-    ).toBe(true);
-
-    const skillsContent = await readFile(
-      path.join(rootDir, ".ged", "SKILLS.md"),
-      "utf8",
-    );
-    expect(skillsContent).toContain("find-skills");
-    expect(skillsContent).toContain("skill-creator");
-    expect(skillsContent).toContain("auto-install");
-    expect(skillsContent).not.toContain("Planned install commands:");
-
-    const registry = await readSkillRegistry(rootDir);
-    expect(
-      registry.installed.some((skill) => skill.name === "find-skills"),
-    ).toBe(true);
-    expect(
-      registry.installed.some((skill) => skill.name === "skill-creator"),
     ).toBe(true);
   });
 
@@ -106,10 +104,6 @@ describe("Ged workflow", () => {
     );
 
     const result = await initializeGedProject(rootDir);
-    const standards = await readFile(
-      path.join(rootDir, ".ged", "STANDARDS.md"),
-      "utf8",
-    );
 
     expect(
       result.discoveredStandards.some((entry) => entry.path === "AGENTS.md"),
@@ -118,9 +112,9 @@ describe("Ged workflow", () => {
       result.pendingStandards.some((entry) => entry.path === "AGENTS.md"),
     ).toBe(true);
     expect(result.standardsPromptNeeded).toBe(true);
-    expect(standards).toContain(
-      "No imported standards have been accepted yet.",
-    );
+    await expect(
+      readFile(path.join(rootDir, ".ged", "STANDARDS.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("initializeGedProject can import discovered standards when confirmed", async () => {
@@ -149,6 +143,43 @@ describe("Ged workflow", () => {
     expect(result.pendingStandards).toEqual([]);
     expect(standards).toContain("CLAUDE.md");
     expect(standards).toContain("Prefer updating docs when behavior changes.");
+  });
+
+  test("changed standard bytes require renewed approval", async () => {
+    const rootDir = await createTempProject("ged-init-standards-reapprove-");
+    const agentsPath = path.join(rootDir, "AGENTS.md");
+    await writeFile(agentsPath, "# AGENTS\n\nUse exact checks.\n", "utf8");
+    await initializeGedProject(rootDir, {
+      ui: {
+        async confirm() {
+          return true;
+        },
+      },
+    });
+
+    await writeFile(agentsPath, "# AGENTS\n\nSkip every check.\n", "utf8");
+    const pending = await initializeGedProject(rootDir);
+    const approvedSnapshot = await readFile(
+      path.join(rootDir, ".ged", "STANDARDS.md"),
+      "utf8",
+    );
+
+    expect(pending.pendingStandards.map((entry) => entry.path)).toContain(
+      "AGENTS.md",
+    );
+    expect(approvedSnapshot).toContain("Use exact checks.");
+    expect(approvedSnapshot).not.toContain("Skip every check.");
+
+    await initializeGedProject(rootDir, {
+      ui: {
+        async confirm() {
+          return true;
+        },
+      },
+    });
+    expect(
+      await readFile(path.join(rootDir, ".ged", "STANDARDS.md"), "utf8"),
+    ).toContain("Skip every check.");
   });
 
   test("initializeGedProject adds .pi to .gitignore in git repos", async () => {
@@ -234,8 +265,10 @@ describe("Ged workflow", () => {
 
     expect(result.onboardingInterviewNeeded).toBe(true);
     expect(result.onboardingReason).toContain("First-run onboarding needed");
-    expect(state.activeTask).toBe("Run onboarding clarification");
-    expect(state.nextStep).toContain("Run a short grill-me clarification");
+    expect(state.activeTask).toBe(
+      "Open governed work when mutation is requested",
+    );
+    expect(state.statusSummary).toContain("No authoritative governance state");
   });
 
   test("initializeGedProject skips onboarding clarification for well-documented repos", async () => {
@@ -281,7 +314,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     const state = await readGedStatus(rootDir);
 
     expect(result.onboardingInterviewNeeded).toBe(false);
-    expect(state.activeTask).toBe("Capture exact requirements");
+    expect(state.activeTask).toBe(
+      "Open governed work when mutation is requested",
+    );
   });
 
   test("planGedProject writes spec, tasks, tests, and updates status", async () => {
@@ -306,8 +341,8 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     );
 
     const state = await readGedStatus(rootDir);
-    expect(state.currentPhase).toBe("plan");
-    expect(state.nextStep).toContain("Implement the next bounded slice");
+    expect(state.currentPhase).toBe("understand");
+    expect(state.statusSummary).toContain("No authoritative governance state");
   });
 
   test("readGedStatus returns a plain-English status summary", async () => {
@@ -318,7 +353,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     const rendered = renderPlainStatus(status);
 
     expect(rendered).toContain("Phase: Understand");
-    expect(rendered).toContain("Active task: Run onboarding clarification");
+    expect(rendered).toContain(
+      "Active task: Open governed work when mutation is requested",
+    );
     expect(rendered).toContain("Next step:");
   });
 
@@ -384,8 +421,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     };
 
     const result = await workOnGedProject(rootDir, engine);
+    const paths = await activeGedPaths(rootDir);
     const history = await readFile(
-      path.join(rootDir, ".ged", "tasks", "T01.history.json"),
+      path.join(taskArtifactDir(rootDir, paths.workId, "T01"), "HISTORY.json"),
       "utf8",
     );
 
@@ -427,7 +465,7 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     const paths = await activeGedPaths(rootDir);
     const tasks = await readFile(paths.tasksPath, "utf8");
     const recovery = await readFile(
-      path.join(rootDir, ".ged", "tasks", "T01-RECOVERY.md"),
+      path.join(taskArtifactDir(rootDir, paths.workId, "T01"), "RECOVERY.md"),
       "utf8",
     );
 
@@ -471,7 +509,7 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
 
     await workOnGedProject(rootDir, engine);
     const result = await workOnGedProject(rootDir, engine);
-    const state = await readGedStatus(rootDir);
+    const state = result.state;
 
     expect(result.kind).toBe("blocked");
     expect(result.message).toContain("remains blocked");
@@ -564,7 +602,6 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     const spec = await readFile(paths.specPath, "utf8");
     const tasks = await readFile(paths.tasksPath, "utf8");
     const sessionSummary = await readFile(paths.sessionSummaryPath, "utf8");
-    const plans = await readPlanIndex(rootDir);
 
     expect(spec).toContain("Webhook reliability");
     expect(spec).not.toContain("Build auth flow");
@@ -576,7 +613,9 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     expect(sessionSummary).toContain(
       "T01 (done): Lock the exact user requirements",
     );
-    expect(plans.some((plan) => plan.status === "discarded")).toBe(true);
+    await expect(
+      readFile(path.join(rootDir, ".ged", "plans", "INDEX.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("planGedProject keeps carried task state for related follow-up requests", async () => {
@@ -614,32 +653,16 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
 
     const paths = await activeGedPaths(rootDir);
     const tasks = await readFile(paths.tasksPath, "utf8");
-    const sessionSummary = await readFile(paths.sessionSummaryPath, "utf8");
 
     expect(tasks).toContain(
       "| T01 | Lock the exact user requirements | - | done |",
     );
-    expect(sessionSummary).not.toContain("## Archived task summaries");
+    await expect(
+      readFile(paths.sessionSummaryPath, "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  test("applyInstallResults moves failed skills to deferred", async () => {
-    const rootDir = await createTempProject("ged-skill-recovery-");
-    await initializeGedProject(rootDir);
-
-    const recovery = await applyInstallResults(rootDir, [
-      { name: "find-skills", success: false, error: "network timeout" },
-    ]);
-
-    expect(recovery.deferred).toContain("find-skills");
-    const registry = await readSkillRegistry(rootDir);
-    expect(registry.deferred.some((s) => s.name === "find-skills")).toBe(true);
-    expect(registry.deferred[0].reason).toContain("network timeout");
-    expect(registry.installed.some((s) => s.name === "find-skills")).toBe(
-      false,
-    );
-  });
-
-  test("ensureTaskSkillDependencies installs bundled skills project-scope", async () => {
+  test("ensureTaskSkillDependencies uses available skills without copying them", async () => {
     const rootDir = await createTempProject("ged-skill-deps-");
     await initializeGedProject(rootDir);
     const paths = await activeGedPaths(rootDir);
@@ -655,17 +678,17 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       dependsOn: [],
     });
 
-    const skillFile = await readFile(
-      path.join(projectSkillsDir(rootDir), "ged-planning", "SKILL.md"),
-      "utf8",
-    );
-
     expect(result.task.skills).toContain("ged-planning");
-    expect(result.installed).toContain("ged-planning");
-    expect(skillFile).toContain("ged-planning");
+    expect(result.installed).toEqual([]);
+    await expect(
+      readFile(
+        path.join(rootDir, ".agents", "skills", "ged-planning", "SKILL.md"),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  test("ensureTaskSkillDependencies creates a project skill when no skill matches", async () => {
+  test("ensureTaskSkillDependencies continues without generating missing skills", async () => {
     const rootDir = await createTempProject("ged-skill-create-");
     await initializeGedProject(rootDir);
 
@@ -680,17 +703,11 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       dependsOn: [],
     });
 
-    expect(result.created.length).toBe(1);
-    const createdName = result.created[0];
-    const createdSkill = await readFile(
-      path.join(projectSkillsDir(rootDir), createdName, "SKILL.md"),
-      "utf8",
-    );
-    expect(result.task.skills).toContain(createdName);
-    expect(createdSkill).toContain("Project-specific skill");
+    expect(result.created).toEqual([]);
+    expect(result.task.skills).toContain("totally-missing-project-skill");
   });
 
-  test("cleanupUnusedProjectSkills removes project skills with no active task refs", async () => {
+  test("cleanupUnusedProjectSkills never deletes durable skills", async () => {
     const rootDir = await createTempProject("ged-skill-cleanup-");
     await initializeGedProject(rootDir);
 
@@ -707,7 +724,8 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
 
     const removed = await cleanupUnusedProjectSkills(rootDir, []);
 
-    expect(removed).toContain(ensured.task.skills[0]);
+    expect(ensured.created).toEqual([]);
+    expect(removed).toEqual([]);
   });
 
   test("modified files are preserved in recovery notes after repeated failures", async () => {
@@ -741,7 +759,10 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     await workOnGedProject(rootDir, engine);
     await workOnGedProject(rootDir, engine);
     const recovery = await readFile(
-      path.join(rootDir, ".ged", "tasks", "T01-RECOVERY.md"),
+      path.join(
+        taskArtifactDir(rootDir, (await activeGedPaths(rootDir)).workId, "T01"),
+        "RECOVERY.md",
+      ),
       "utf8",
     );
     expect(recovery).toContain("src/feature.ts");
@@ -940,22 +961,6 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     expect(taskRows.length).toBeLessThanOrEqual(2);
   });
 
-  test("readConfig parses a written CONFIG.md correctly", async () => {
-    const rootDir = await createTempProject("ged-config-");
-    await initializeGedProject(rootDir);
-
-    await writeConfig(rootDir, {
-      models: {
-        brain: "openai/gpt-5.4",
-      },
-      cleanupCompletedPlans: true,
-    });
-
-    const config = await readConfig(rootDir);
-    expect(config.models.brain).toBe("openai/gpt-5.4");
-    expect(config.cleanupCompletedPlans).toBe(true);
-  });
-
   test("runDoctor reports healthy on an initialized project", async () => {
     const rootDir = await createTempProject("ged-doctor-");
     await initializeGedProject(rootDir);
@@ -985,101 +990,7 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     ).toBe(true);
   });
 
-  test("createPlan writes a plan file and updates the index", async () => {
-    const rootDir = await createTempProject("ged-plans-");
-    await initializeGedProject(rootDir);
-
-    const entry = await createPlan(rootDir, "Add auth", "Implement auth flow", [
-      "Setup JWT",
-      "Add login endpoint",
-    ]);
-
-    expect(entry.status).toBe("active");
-    expect(entry.title).toBe("Add auth");
-
-    const index = await readPlanIndex(rootDir);
-    expect(index).toHaveLength(1);
-    expect(index[0].id).toBe(entry.id);
-
-    const planFile = await readFile(
-      path.join(rootDir, ".ged", "plans", `${entry.id}.md`),
-      "utf8",
-    );
-    expect(planFile).toContain("# Add auth");
-    expect(planFile).toContain("Setup JWT");
-    expect(planFile).toContain("Add login endpoint");
-  });
-
-  test("updatePlanStatus marks a plan as completed", async () => {
-    const rootDir = await createTempProject("ged-plans-status-");
-    await initializeGedProject(rootDir);
-
-    const entry = await createPlan(rootDir, "Fix bug", "Fix the crash", []);
-    const updated = await updatePlanStatus(rootDir, entry.id, "completed");
-
-    expect(updated?.status).toBe("completed");
-    expect(updated?.completedAt).toBeDefined();
-
-    const index = await readPlanIndex(rootDir);
-    expect(index[0].status).toBe("completed");
-  });
-
-  test("cleanupCompletedPlans removes completed plan files", async () => {
-    const rootDir = await createTempProject("ged-plans-cleanup-");
-    await initializeGedProject(rootDir);
-
-    const entry = await createPlan(rootDir, "Old plan", "Done", []);
-    await updatePlanStatus(rootDir, entry.id, "completed");
-
-    const removed = await cleanupCompletedPlans(rootDir);
-    expect(removed).toContain(entry.id);
-
-    // Index still has the entry, but the file is gone
-    const index = await readPlanIndex(rootDir);
-    expect(index).toHaveLength(1);
-    expect(index[0].status).toBe("completed");
-
-    await expect(
-      readFile(path.join(rootDir, ".ged", "plans", `${entry.id}.md`), "utf8"),
-    ).rejects.toThrow();
-  });
-
-  test("appendProgress and readProgress track progress entries", async () => {
-    const rootDir = await createTempProject("ged-progress-");
-    await initializeGedProject(rootDir);
-
-    await appendProgress(rootDir, "Started work on auth");
-    await appendProgress(rootDir, "Completed login endpoint");
-
-    const progress = await readProgress(rootDir);
-    expect(progress).toContain("Started work on auth");
-    expect(progress).toContain("Completed login endpoint");
-  });
-
-  test("renderPlanIndex groups by status", async () => {
-    const rendered = renderPlanIndex([
-      {
-        id: "plan-1",
-        title: "Active plan",
-        status: "active",
-        createdAt: "2026-01-01",
-      },
-      {
-        id: "plan-2",
-        title: "Done plan",
-        status: "completed",
-        createdAt: "2026-01-01",
-        completedAt: "2026-01-02",
-      },
-    ]);
-
-    expect(rendered).toContain("Active:");
-    expect(rendered).toContain("Active plan");
-    expect(rendered).toContain("Completed:");
-    expect(rendered).toContain("Done plan");
-  });
-
-  test("planGedProject creates a plan entry and logs progress", async () => {
+  test("planGedProject does not duplicate work into global plans or progress", async () => {
     const rootDir = await createTempProject("ged-plan-creates-plan-");
     await initializeGedProject(rootDir);
 
@@ -1090,24 +1001,12 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const index = await readPlanIndex(rootDir);
-    expect(index.length).toBeGreaterThanOrEqual(1);
-    expect(index[0].status).toBe("active");
-
-    const progress = await readProgress(rootDir);
-    expect(progress).toContain("Created plan");
-  });
-
-  test("config round-trips cleanupCompletedPlans setting", async () => {
-    const rootDir = await createTempProject("ged-config-cleanup-");
-    await initializeGedProject(rootDir);
-
-    const config = await readConfig(rootDir);
-    expect(config.cleanupCompletedPlans).toBe(false);
-
-    await writeConfig(rootDir, { ...config, cleanupCompletedPlans: true });
-    const reloaded = await readConfig(rootDir);
-    expect(reloaded.cleanupCompletedPlans).toBe(true);
+    await expect(
+      readFile(path.join(rootDir, ".ged", "plans", "INDEX.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(path.join(rootDir, ".ged", "PROGRESS.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   test("estimateTokens uses char-based approximation", () => {
@@ -1134,14 +1033,20 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     const planFiles = getPhaseFiles("plan");
 
     expect(buildFiles).toContain(".ged/work/<work-id>/TESTS.md");
-    expect(planFiles).toContain(".ged/DECISIONS.md");
-    expect(planFiles).not.toContain(".ged/PROGRESS.md");
-    expect(buildFiles).toContain(".ged/PROGRESS.md");
+    expect(planFiles).toContain("CONTEXT.md");
+    expect(planFiles).not.toContain(".ged/DECISIONS.md");
+    expect(buildFiles).not.toContain(".ged/PROGRESS.md");
   });
 
   test("gatherPhaseContext reads files within token budget", async () => {
     const rootDir = await createTempProject("ged-context-phase-");
     await initializeGedProject(rootDir);
+    await planGedProject(rootDir, {
+      summary: "Build context fixtures",
+      desiredOutcome: "Context fixtures",
+      constraints: [],
+      userSignals: [],
+    });
 
     const blocks = await gatherPhaseContext(rootDir, "build", 10000);
     const paths = await activeGedPaths(rootDir);
@@ -1167,6 +1072,16 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
   test("gatherTaskContext includes task-relevant files", async () => {
     const rootDir = await createTempProject("ged-context-task-");
     await initializeGedProject(rootDir);
+    await planGedProject(rootDir, {
+      summary: "Build task context fixtures",
+      desiredOutcome: "Task context fixtures",
+      constraints: [],
+      userSignals: [],
+    });
+    await createProjectSummary(
+      rootDir,
+      "# Project\n\nSubstantive task context for this fixture.\n",
+    );
 
     const task = {
       id: "T01",
@@ -1215,14 +1130,18 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const taskDir = path.join(rootDir, ".ged", "tasks");
+    const taskDir = taskArtifactDir(
+      rootDir,
+      (await activeGedPaths(rootDir)).workId,
+      "T01",
+    );
     await mkdir(taskDir, { recursive: true });
     const history = [
       { verification: { passed: false, failureSummary: ["err1"] } },
       { verification: { passed: false, failureSummary: ["err2"] } },
     ];
     await writeFile(
-      path.join(taskDir, "T01.history.json"),
+      path.join(taskDir, "HISTORY.json"),
       JSON.stringify(history),
       "utf8",
     );
@@ -1241,7 +1160,11 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const taskDir = path.join(rootDir, ".ged", "tasks");
+    const taskDir = taskArtifactDir(
+      rootDir,
+      (await activeGedPaths(rootDir)).workId,
+      "T01",
+    );
     await mkdir(taskDir, { recursive: true });
     const history = [
       { verification: { passed: false, failureSummary: ["type error"] } },
@@ -1249,7 +1172,7 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       { verification: { passed: false, failureSummary: ["type error"] } },
     ];
     await writeFile(
-      path.join(taskDir, "T01.history.json"),
+      path.join(taskDir, "HISTORY.json"),
       JSON.stringify(history),
       "utf8",
     );
@@ -1270,7 +1193,11 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       userSignals: [],
     });
 
-    const taskDir = path.join(rootDir, ".ged", "tasks");
+    const taskDir = taskArtifactDir(
+      rootDir,
+      (await activeGedPaths(rootDir)).workId,
+      "T01",
+    );
     await mkdir(taskDir, { recursive: true });
     const history = [
       { verification: { passed: false, failureSummary: ["err1"] } },
@@ -1278,7 +1205,7 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
       { verification: { passed: false, failureSummary: ["err3"] } },
     ];
     await writeFile(
-      path.join(taskDir, "T01.history.json"),
+      path.join(taskDir, "HISTORY.json"),
       JSON.stringify(history),
       "utf8",
     );
@@ -1561,9 +1488,10 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
 `,
       "utf8",
     );
-    await mkdir(path.join(rootDir, ".ged", "tasks"), { recursive: true });
+    const taskDir = taskArtifactDir(rootDir, paths.workId, "T01");
+    await mkdir(taskDir, { recursive: true });
     await writeFile(
-      path.join(rootDir, ".ged", "tasks", "T01.history.json"),
+      path.join(taskDir, "HISTORY.json"),
       JSON.stringify([{ modifiedFiles: ["src/auth.ts"] }]),
       "utf8",
     );
@@ -1584,80 +1512,5 @@ The product must preserve audit history, avoid surprise downtime, and keep rollb
     expect(result.diagnostics).toBeDefined();
     expect(result.diagnostics.overall).toBeDefined();
     expect(result.diagnostics.checks.length).toBeGreaterThan(0);
-  });
-
-  // --- config edge case tests ---
-
-  test("readConfig returns defaults for missing CONFIG.md", async () => {
-    const rootDir = await createTempProject("ged-config-missing-");
-    const config = await readConfig(rootDir);
-    expect(config.models.brain).toBe("anthropic/claude-opus-4-6");
-    expect(config.cleanupCompletedPlans).toBe(false);
-  });
-
-  test("readConfig handles CONFIG.md with extra whitespace", async () => {
-    const rootDir = await createTempProject("ged-config-ws-");
-    await mkdir(path.join(rootDir, ".ged"), { recursive: true });
-    await writeFile(
-      path.join(rootDir, ".ged", "CONFIG.md"),
-      `# GedPi Configuration
-
-## Models
-
-| Agent | Model |
-|-------|-------|
-| brain | openai/gpt-5.4 |
-
-## Memory
-
-Delete completed plan files: true
-`,
-      "utf8",
-    );
-
-    const config = await readConfig(rootDir);
-    expect(config.models.brain).toBe("openai/gpt-5.4");
-    expect(config.cleanupCompletedPlans).toBe(true);
-  });
-
-  test("readConfig handles CONFIG.md missing Memory section", async () => {
-    const rootDir = await createTempProject("ged-config-nomem-");
-    await mkdir(path.join(rootDir, ".ged"), { recursive: true });
-    await writeFile(
-      path.join(rootDir, ".ged", "CONFIG.md"),
-      `# GedPi Configuration
-
-## Models
-
-| Agent | Model |
-|-------|-------|
-| brain | anthropic/claude-opus-4-6 |
-`,
-      "utf8",
-    );
-
-    const config = await readConfig(rootDir);
-    // Missing Memory section → uses default
-    expect(config.cleanupCompletedPlans).toBe(false);
-  });
-
-  test("readConfig handles empty model values gracefully", async () => {
-    const rootDir = await createTempProject("ged-config-empty-");
-    await mkdir(path.join(rootDir, ".ged"), { recursive: true });
-    await writeFile(
-      path.join(rootDir, ".ged", "CONFIG.md"),
-      `# GedPi Configuration
-
-## Models
-
-| Agent | Model |
-|-------|-------|
-| brain |  |
-`,
-      "utf8",
-    );
-
-    const config = await readConfig(rootDir);
-    expect(config.models.brain).toBe("anthropic/claude-opus-4-6");
   });
 });

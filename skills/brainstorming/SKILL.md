@@ -35,13 +35,17 @@ Do NOT invoke `ged-planning`, `ged-execution`, write any code, scaffold any proj
 
 Work through these in order:
 
-1. **Understand current context** — read `.ged/PROJECT.md`, `.ged/ARCHITECTURE.md`, `.ged/DECISIONS.md`, and any existing `.ged/work/<work-id>/SPEC.md`. If live codebase context is needed, dispatch `ged-explorer` subagent for targeted discovery.
+1. **Understand current context** — read substantive `.ged/PROJECT.md`, root
+   `CONTEXT.md`, relevant `docs/adr/` records, and any existing
+   `.ged/work/<work-id>/SPEC.md`. If live codebase context is needed, dispatch
+   `ged-explorer` for targeted discovery.
 2. **Identify the design decisions to make** — what are the open questions? What needs user input before implementation can proceed?
 3. **Propose 2-3 approaches** — with trade-offs and your recommendation. Scale depth to the complexity of the decision.
 4. **Present design** — once the approach is settled, flesh out the design. Cover architecture, components, data flow, key interfaces.
 5. **Get user approval** — confirm each section before moving on.
 6. **Write design to SPEC.md** — record the approved design in `.ged/work/<work-id>/SPEC.md`.
-7. **Promote durable decisions** — record any lasting architectural choices in `.ged/DECISIONS.md`.
+7. **Promote durable decisions sparingly** — record only real, hard-to-reverse
+   trade-offs in `docs/adr/`.
 8. **Transition to planning** — invoke `ged-planning` to break the design into implementation tasks.
 
 ## Process Flow
@@ -56,7 +60,7 @@ digraph brainstorming_gedpi {
     "Present design sections" [shape=box];
     "User approves?" [shape=diamond];
     "Write approved design\nto .ged/work/<work-id>/SPEC.md" [shape=box];
-    "Record durable decisions\nin .ged/DECISIONS.md" [shape=box, style=dashed];
+    "Record ADR-worthy decisions\nin docs/adr/" [shape=box, style=dashed];
     "Transition to\n ged-planning skill" [shape=doublecircle];
 
     "Understand context" -> "Need codebase evidence?";
@@ -68,8 +72,8 @@ digraph brainstorming_gedpi {
     "Present design sections" -> "User approves?";
     "User approves?" -> "Present design sections" [label="no, revise"];
     "User approves?" -> "Write approved design\nto .ged/work/<work-id>/SPEC.md" [label="yes"];
-    "Write approved design\nto .ged/work/<work-id>/SPEC.md" -> "Record durable decisions\nin .ged/DECISIONS.md";
-    "Record durable decisions\nin .ged/DECISIONS.md" -> "Transition to\n ged-planning skill";
+    "Write approved design\nto .ged/work/<work-id>/SPEC.md" -> "Record ADR-worthy decisions\nin docs/adr/";
+    "Record ADR-worthy decisions\nin docs/adr/" -> "Transition to\n ged-planning skill";
 }
 ```
 
@@ -79,8 +83,8 @@ digraph brainstorming_gedpi {
 
 Read the project's durable memory first:
 - `.ged/PROJECT.md` — goals, constraints, success criteria
-- `.ged/ARCHITECTURE.md` — current system shape
-- `.ged/DECISIONS.md` — prior decisions that constrain this design
+- `CONTEXT.md` — canonical project/domain vocabulary
+- `docs/adr/` — prior trade-off decisions that constrain this design
 - `.ged/work/<work-id>/SPEC.md` — any existing spec for the current work item
 
 If the design depends on understanding existing code (e.g., "what does the extension API look like?", "how is X currently implemented?"), dispatch `ged-explorer` as a background subagent:
@@ -171,7 +175,8 @@ How to verify the implementation.
 
 ### 7. Record durable decisions
 
-If the design makes lasting architectural decisions that future work should respect, add them to `.ged/DECISIONS.md`:
+If the design makes a hard-to-reverse, surprising trade-off that future work
+should respect, add a sparse record under `docs/adr/`:
 
 ```
 - Date: YYYY-MM-DD

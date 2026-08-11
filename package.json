@@ -31,6 +31,7 @@
     "bin",
     "agents",
     "CHANGELOG.md",
+    "docs",
     "extensions",
     "themes",
     "prompts",

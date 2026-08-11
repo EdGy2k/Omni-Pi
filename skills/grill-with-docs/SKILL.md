@@ -25,7 +25,8 @@ During codebase exploration, also look for existing documentation:
 - `CONTEXT-MAP.md` at the repo root for a multi-context repo.
 - `docs/adr/` for system-wide ADRs.
 - Context-specific `CONTEXT.md` or `docs/adr/` folders near relevant source directories.
-- Ged memory files such as `.ged/CONTEXT-MAP.md`, `.ged/GLOSSARY.md`, and `.ged/DECISIONS.md`.
+- Substantive `.ged/PROJECT.md` facts. Legacy `.ged/GLOSSARY.md` and
+  `.ged/DECISIONS.md` are migration pointers only, never writable authorities.
 
 Create files lazily — only when there is something concrete to write. If no `CONTEXT.md` exists, create one when the first term is resolved. If no `docs/adr/` exists, create it when the first ADR is needed.
 
@@ -33,7 +34,8 @@ Create files lazily — only when there is something concrete to write. If no `C
 
 ### Challenge against the glossary
 
-When the user uses a term that conflicts with existing language in `CONTEXT.md` or `.ged/GLOSSARY.md`, call it out immediately.
+When the user uses a term that conflicts with existing language in canonical
+`CONTEXT.md`, call it out immediately.
 
 Example: "Your glossary defines 'cancellation' as X, but you seem to mean Y — which is it?"
 

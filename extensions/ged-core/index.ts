@@ -5,9 +5,11 @@ import {
   buildPassiveGedPromptSuffix,
   buildWorkflowPromptSuffix,
   ensureGedReady,
+  renderPromptContentBlock,
 } from "../../src/brain.js";
 import { createGedCommands } from "../../src/commands.js";
 import { renderHeader } from "../../src/header.js";
+import { registerDurableMemoryTool } from "../../src/memory-runtime.js";
 import {
   registerGedMessageRenderer,
   registerPiCommands,
@@ -23,6 +25,7 @@ import {
   refreshRtkStatusIndicator,
   registerRtkBashRouting,
 } from "../../src/rtk.js";
+import { registerReusableSkillTool } from "../../src/skill-runtime.js";
 import { ensurePiSettings, formatGedStatus } from "../../src/theme.js";
 import { registerUpdater } from "../../src/updater.js";
 import { registerGedWorkRuntime } from "../../src/work-runtime.js";
@@ -42,6 +45,8 @@ export default async function gedCoreExtension(
   registerRtkBashRouting(api);
   registerRepoMapTracking(api);
   registerPlanReviewTool(api);
+  registerDurableMemoryTool(api);
+  registerReusableSkillTool(api);
   registerGhostlightUi(api);
 
   api.on("session_start", async (_event, ctx) => {
@@ -82,15 +87,25 @@ export default async function gedCoreExtension(
   });
 
   api.on("before_agent_start", async (event, ctx) => {
-    const passivePrompt = await buildPassiveGedPromptSuffix(ctx.cwd);
-    const repoMapPrompt = await buildRepoMapPromptSuffix(ctx.cwd, {
-      prompt: typeof event.prompt === "string" ? event.prompt : "",
-    });
-
     const init = await ensureGedReady(ctx.cwd, {
       ui: "ui" in ctx ? ctx.ui : undefined,
     });
-    const workflowPrompt = await buildWorkflowPromptSuffix(ctx.cwd);
+    const [passivePrompt, repoMapPrompt, workflowPrompt] = await Promise.all([
+      buildPassiveGedPromptSuffix(ctx.cwd),
+      buildRepoMapPromptSuffix(ctx.cwd, {
+        prompt: typeof event.prompt === "string" ? event.prompt : "",
+      }),
+      buildWorkflowPromptSuffix(ctx.cwd),
+    ]);
+    const framedRepoMapPrompt = repoMapPrompt
+      ? `## Current Repository Map Data\n\n${renderPromptContentBlock(
+          "runtime-data",
+          "repository-map",
+          repoMapPrompt,
+          Number.MAX_SAFE_INTEGER,
+        )}`
+      : "";
+
     const onboardingKickoff = init.initResult?.onboardingInterviewNeeded
       ? buildOnboardingInterviewKickoff(init.initResult)
       : "";
@@ -98,7 +113,7 @@ export default async function gedCoreExtension(
       event.systemPrompt,
       passivePrompt,
       workflowPrompt,
-      repoMapPrompt,
+      framedRepoMapPrompt,
       onboardingKickoff,
     ]
       .filter(Boolean)

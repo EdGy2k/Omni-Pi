@@ -6,12 +6,6 @@ import { promisify } from "node:util";
 import { writeFileAtomic } from "./atomic.js";
 import { GED_DIR } from "./contracts.js";
 import { withProcessQueue } from "./serial-queue.js";
-import {
-  DEFAULT_WORK_NOTES,
-  DEFAULT_WORK_SPEC,
-  DEFAULT_WORK_TASKS,
-  DEFAULT_WORK_TESTS,
-} from "./templates.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_WORK_SESSION_ID = "ged-default-session";
@@ -33,7 +27,6 @@ export interface ActiveGedPaths {
   metaPath: string;
   statePath: string;
   sessionSummaryPath: string;
-  checkpointsPath: string;
   governancePath: string;
 }
 
@@ -333,7 +326,6 @@ export function gedPathsForWorkId(
     metaPath: path.join(workDir, "META.json"),
     statePath: path.join(runtimeDir, "STATE.md"),
     sessionSummaryPath: path.join(runtimeDir, "SESSION-SUMMARY.md"),
-    checkpointsPath: path.join(runtimeDir, "checkpoints.json"),
     governancePath: path.join(runtimeDir, "governance.json"),
   };
 }
@@ -465,13 +457,10 @@ async function createWorkItem(
     };
     try {
       await mkdir(paths.runtimeDir);
-      await Promise.all([
-        writeFileAtomic(paths.metaPath, `${JSON.stringify(meta, null, 2)}\n`),
-        writeFileAtomic(paths.specPath, DEFAULT_WORK_SPEC),
-        writeFileAtomic(paths.tasksPath, DEFAULT_WORK_TASKS),
-        writeFileAtomic(paths.testsPath, DEFAULT_WORK_TESTS),
-        writeFileAtomic(paths.notesPath, DEFAULT_WORK_NOTES),
-      ]);
+      await writeFileAtomic(
+        paths.metaPath,
+        `${JSON.stringify(meta, null, 2)}\n`,
+      );
       return { meta, paths };
     } catch (error) {
       await Promise.all([

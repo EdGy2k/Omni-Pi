@@ -27,7 +27,13 @@ writers, and use external `pi-intercom` only for opt-in exact-target verified
 dependency facts. Native supervisor routing owns child decisions. Assistant
 completion is evidence proposal, never authorization.
 
-**Memory**: `.ged/` files hold durable project standards, context, and Ged workflow state — not source code. `.pi/` is Pi-runtime-local state and should stay out of Git.
+**Memory**: Fresh `.ged/` initialization is machine-metadata-only. Substantive
+project summary lives in lazy `.ged/PROJECT.md`, domain vocabulary in root
+`CONTEXT.md`, trade-off decisions in sparse `docs/adr/`, approved imported
+instructions in `.ged/STANDARDS.md`, and native reusable project skills in
+`.agents/skills/`. Work evidence is scoped by immutable work ID; runtime
+Markdown is optional projection/handoff data and never authority. `.pi/` is
+Pi-runtime-local state and should stay out of Git.
 
 **Extensions**: Pi loads extensions listed in `package.json` under `pi.extensions`. Custom entrypoints live in `extensions/`. Third-party extensions are referenced via `./node_modules/` paths.
 
@@ -81,6 +87,9 @@ The Ged workflow is always active:
 - ask the user whether to keep repo-wide standards in Ged's durable config
 - run skill-fit for planned work and install/create project skills only for a
   real reusable capability gap
+- never generate a skill from unmatched task prose or delete reusable project
+  knowledge when a task closes; explicit creation uses `ged_skill` and Pi's
+  native `.agents/skills/` project discovery
 - ensure `.pi/` is ignored in `.gitignore` when the project is a Git repo
 
 **Commits**: After completing any task — including individual implementation slices, bug fixes, refactors, or cleanup — create a git commit to snapshot the work. Commit every change you make unless the user explicitly asks not to. Before committing, run the relevant verification for the touched area and fix any failures. Use conventional commit format (`feat:`, `fix:`, `refactor:`, `chore:`, etc.). Never leave completed work uncommitted. Check `git status` after each task; if there are staged or unstaged changes, commit them.

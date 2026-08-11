@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { describe, expect, test } from "vitest";
+import { DURABLE_ARTIFACT_INVENTORY } from "../src/durable-memory.js";
 
 describe("documentation coverage", () => {
   test("README documents bundled commands", () => {
@@ -67,5 +68,28 @@ describe("documentation coverage", () => {
     expect(orchestration).toContain("pi-intercom");
     expect(backlog).toContain("parallel `ged-explorer` agents");
     expect(backlog).toContain("ctx.getSystemPromptOptions()");
+  });
+
+  test("durable-memory docs define lazy artifacts and authority boundaries", () => {
+    const readme = readFileSync(
+      new URL("../README.md", import.meta.url),
+      "utf8",
+    );
+    const artifacts = readFileSync(
+      new URL("../docs/durable-memory-artifacts.md", import.meta.url),
+      "utf8",
+    );
+
+    expect(readme).toContain("Fresh initialization creates");
+    expect(readme).toContain(".agents/skills/<name>/SKILL.md");
+    expect(readme).toContain(
+      "governance.json` remains the sole machine authority",
+    );
+    expect(artifacts).toContain("## Prompt trust");
+    expect(artifacts).toContain("## Version 3 migration");
+    expect(artifacts).toContain("byte-for-byte no-op");
+    for (const artifact of DURABLE_ARTIFACT_INVENTORY) {
+      expect(artifacts).toContain(`| \`${artifact.artifact}\``);
+    }
   });
 });

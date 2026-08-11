@@ -3,6 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -557,6 +558,9 @@ describe("Ged governance runtime", () => {
       operation: "open",
       requestId: "request-1",
     });
+    expect(
+      (await readdir(path.join(rootDir, ".ged", "work", workId))).sort(),
+    ).toEqual(["DIRECT.md", "META.json"]);
 
     const pending = await runtime.emit(
       "tool_call",
@@ -808,6 +812,12 @@ describe("Ged governance runtime", () => {
     const opened = await runtime.execute("ged_work", plannedOpen(), ctx);
     const workId = opened.details?.workId as string;
     const paths = await activeGedPaths(rootDir, "session-a");
+    expect((await readdir(paths.workDir)).sort()).toEqual([
+      "META.json",
+      "SPEC.md",
+      "TASKS.md",
+      "TESTS.md",
+    ]);
 
     await successfulWrite(runtime, ctx, "plan-write", paths.specPath);
     expect(
@@ -951,6 +961,7 @@ describe("Ged governance runtime", () => {
     await mkdir(path.join(rootDir, "src"), { recursive: true });
     const sourceAlias = path.join(rootDir, "src", "governance-alias.json");
     await symlink(paths.governancePath, sourceAlias);
+    await writeFile(paths.notesPath, "# Notes\n");
     await rm(paths.notesPath);
     await symlink(paths.governancePath, paths.notesPath);
     for (const [index, filePath] of [sourceAlias, paths.notesPath].entries()) {

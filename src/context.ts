@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { GedPhase, TaskBrief } from "./contracts.js";
-import { GED_DIR } from "./contracts.js";
+import { taskArtifactDir } from "./durable-memory.js";
 import { activeGedPaths, relativeGedPath } from "./ged-paths.js";
 
 const CHARS_PER_TOKEN = 4;
@@ -37,9 +37,7 @@ export function fitsInBudget(budget: TokenBudget, text: string): boolean {
 
 const DURABLE_FILES = {
   project: ".ged/PROJECT.md",
-  ideas: ".ged/IDEAS.md",
-  decisions: ".ged/DECISIONS.md",
-  progress: ".ged/PROGRESS.md",
+  context: "CONTEXT.md",
 } as const;
 
 export function getPhaseFiles(phase: GedPhase): string[] {
@@ -47,16 +45,15 @@ export function getPhaseFiles(phase: GedPhase): string[] {
     case "understand":
       return [
         DURABLE_FILES.project,
-        DURABLE_FILES.ideas,
+        DURABLE_FILES.context,
         ".ged/runtime/<work-id>/SESSION-SUMMARY.md",
-        DURABLE_FILES.progress,
       ];
     case "plan":
       return [
         DURABLE_FILES.project,
         ".ged/work/<work-id>/SPEC.md",
         ".ged/work/<work-id>/TASKS.md",
-        DURABLE_FILES.decisions,
+        DURABLE_FILES.context,
         ".ged/runtime/<work-id>/SESSION-SUMMARY.md",
       ];
     case "build":
@@ -64,7 +61,6 @@ export function getPhaseFiles(phase: GedPhase): string[] {
         ".ged/work/<work-id>/SPEC.md",
         ".ged/work/<work-id>/TASKS.md",
         ".ged/work/<work-id>/TESTS.md",
-        DURABLE_FILES.progress,
       ];
     case "check":
       return [
@@ -77,9 +73,8 @@ export function getPhaseFiles(phase: GedPhase): string[] {
         ".ged/work/<work-id>/SPEC.md",
         ".ged/work/<work-id>/TASKS.md",
         ".ged/work/<work-id>/TESTS.md",
-        DURABLE_FILES.decisions,
+        DURABLE_FILES.context,
         ".ged/runtime/<work-id>/SESSION-SUMMARY.md",
-        DURABLE_FILES.progress,
       ];
   }
 }
@@ -175,12 +170,15 @@ export async function gatherTaskContext(
     });
   }
 
-  const briefPath = path.join(rootDir, GED_DIR, "tasks", `${task.id}-BRIEF.md`);
+  const briefPath = path.join(
+    taskArtifactDir(rootDir, paths.workId, task.id),
+    "BRIEF.md",
+  );
   const briefContent = await safeReadFile(briefPath);
   if (briefContent && fitsInBudget(budget, briefContent)) {
     budget = consumeBudget(budget, briefContent);
     blocks.push({
-      file: `tasks/${task.id}-BRIEF.md`,
+      file: relativeGedPath(rootDir, briefPath),
       content: briefContent,
       tokens: estimateTokens(briefContent),
     });
