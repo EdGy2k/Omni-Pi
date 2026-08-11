@@ -9,6 +9,7 @@
 
 ## Status
 
+- **Status**: DONE — content-bound governance verified
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: MED
@@ -131,13 +132,13 @@ interception “cannot be bypassed.”
 
 ## Done criteria
 
-- [ ] Plan approval is content-bound.
-- [ ] Any observed repo mutation invalidates affected verification.
-- [ ] Verifier/process success alone never authorizes commit.
-- [ ] Verification matches the staged content exactly.
-- [ ] Unrelated dirty/staged changes are rejected or preserved outside scope.
-- [ ] Commit milestone requires proven HEAD change.
-- [ ] Full verification passes and docs/changelog state honest guarantees.
+- [x] Plan approval is content-bound.
+- [x] Any observed repo mutation invalidates affected verification.
+- [x] Verifier/process success alone never authorizes commit.
+- [x] Verification matches the staged content exactly.
+- [x] Unrelated dirty/staged changes are rejected or preserved outside scope.
+- [x] Commit milestone requires proven HEAD and tree change.
+- [x] Full verification passes and docs/changelog state honest guarantees.
 
 ## STOP conditions
 
@@ -153,4 +154,3 @@ interception “cannot be bypassed.”
 Any new mutation-capable tool should work automatically through pre/post repo
 snapshots; avoid growing a command-parser security boundary. Evidence formats
 must be versioned and ignore unknown future fields when safe.
-

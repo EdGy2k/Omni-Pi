@@ -80,3 +80,12 @@
     become terminal; terminal states never transition. Completion additionally
     requires current commit-grade verification, and all transitions reject
     pending mutations.
+- Date: 2026-08-11
+  - Decision: Bind plan acceptance, mutation evidence, verification, and commit
+    milestones to versioned canonical SHA-256 repository snapshots.
+  - Why: Tool/process success and timestamps cannot prove that accepted or
+    verified bytes still match a commit, and unrelated staged changes must not
+    be swept into governed work.
+  - Impact: Work opening records a baseline; mutation-capable tools use durable
+    pre/post snapshots; verification commands run through the runtime; commits
+    require exact staged/full snapshot equality and observed work scope.

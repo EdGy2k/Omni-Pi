@@ -105,7 +105,7 @@ describe("Ged brain runtime", () => {
     expect(prompt).toContain("gedpi_plan_review");
     expect(prompt).toContain("fall back to chat approval");
     expect(prompt).toContain(
-      "ged_governance accept-plan before source mutation",
+      "ged_governance accept-plan to bind their exact bytes before source mutation",
     );
     expect(prompt).toContain("## Commit Preference");
     expect(prompt).toContain("Current setting: ask");
@@ -343,6 +343,11 @@ describe("Ged brain runtime", () => {
       const rootDir = await createTempProject(
         `ged-brain-staffing-${agentsEnabled ? "on" : "off"}-`,
       );
+      execSync("git init -b main", { cwd: rootDir });
+      execSync('git config user.email "test@example.com"', { cwd: rootDir });
+      execSync('git config user.name "Test"', { cwd: rootDir });
+      await writeFile(path.join(rootDir, "README.md"), "initial\n");
+      execSync("git add README.md && git commit -m initial", { cwd: rootDir });
       if (agentsEnabled) await enableProjectSubagents(rootDir);
       const handlers = new Map<
         string,
@@ -487,6 +492,8 @@ describe("Ged brain runtime", () => {
           ),
         ).toBeUndefined();
       }
+      await mkdir(path.join(rootDir, "src"), { recursive: true });
+      await writeFile(path.join(rootDir, "src", "index.ts"), "export {};\n");
       for (const handler of handlers.get("tool_result") ?? []) {
         await handler(
           {
@@ -500,9 +507,16 @@ describe("Ged brain runtime", () => {
           ctx,
         );
       }
+      execSync("git add src/index.ts", { cwd: rootDir });
       await governanceTool.execute(
         "record-verification",
-        { action: "record-verification", summary: "Checks passed" },
+        {
+          action: "record-verification",
+          summary: "Checks passed",
+          checks: [
+            { command: process.execPath, args: ["-e", "process.exit(0)"] },
+          ],
+        },
         undefined,
         undefined,
         ctx,
@@ -520,6 +534,7 @@ describe("Ged brain runtime", () => {
           ),
         ).toBeUndefined();
       }
+      execSync('git commit -m "verified"', { cwd: rootDir });
       for (const handler of handlers.get("tool_result") ?? []) {
         await handler(
           {

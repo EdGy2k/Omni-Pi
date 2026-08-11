@@ -59,9 +59,9 @@ describe("documentation coverage", () => {
     expect(orchestration).toContain("### Explicit lifecycle");
     expect(orchestration).toContain("Terminal work never");
     expect(orchestration).toContain("sole machine authority");
-    expect(orchestration).toContain("later in append order");
+    expect(orchestration).toContain("full repository snapshot");
     expect(orchestration).toContain("## Current enforcement boundary");
-    expect(orchestration).toContain("Plan 002");
+    expect(orchestration).toContain("pre/post repository");
     expect(orchestration).toContain("## Execution staffing plane");
     expect(orchestration).toContain("One writer");
     expect(orchestration).toContain("pi-intercom");

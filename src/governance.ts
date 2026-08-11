@@ -100,10 +100,64 @@ export type GovernanceEvidenceKind =
   | "plan"
   | "implementation"
   | "verification"
+  | "milestone"
   | "approval"
   | "migration-required";
 
 export type GovernanceEvidenceSource = "human" | "runtime" | "agent";
+
+export interface PlanContentBinding {
+  type: "plan-content";
+  digest: string;
+  paths: string[];
+}
+
+export interface MutationContentBinding {
+  type: "mutation-content";
+  beforeDigest: string;
+  afterDigest: string;
+  changedPaths: string[];
+}
+
+export interface VerificationCommandResult {
+  command: string;
+  args: string[];
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
+export interface VerificationContentBinding {
+  type: "verification-content";
+  snapshot: RepositorySnapshot;
+  scopePaths: string[];
+  commands: VerificationCommandResult[];
+  environment: {
+    node: string;
+    platform: string;
+    arch: string;
+  };
+  review?: {
+    outcome: "clean" | "findings";
+    findings: string[];
+  };
+  residualRisks: string[];
+}
+
+export interface CommitMilestoneBinding {
+  type: "commit-milestone";
+  beforeHead: string | null;
+  afterHead: string;
+  committedTree: string;
+  verifiedSnapshotDigest: string;
+}
+
+export type GovernanceEvidenceBinding =
+  | PlanContentBinding
+  | MutationContentBinding
+  | VerificationContentBinding
+  | CommitMilestoneBinding;
 
 export interface GovernanceEvidence {
   id: string;
@@ -113,6 +167,7 @@ export interface GovernanceEvidence {
   recordedAt: string;
   summary: string;
   outcome: "observed" | "satisfied" | "failed";
+  binding?: GovernanceEvidenceBinding;
 }
 
 export interface GovernanceApproval {
@@ -135,6 +190,18 @@ export interface GovernancePendingMutation {
   requestId: string;
   toolCallId: string;
   target: string;
+  startedAt: string;
+}
+
+export interface GovernancePendingCommit {
+  id: string;
+  requestId: string;
+  toolCallId: string;
+  beforeHead: string | null;
+  expectedTree: string;
+  unstagedDigest: string;
+  untrackedDigest: string;
+  verifiedSnapshotDigest: string;
   startedAt: string;
 }
 
@@ -162,7 +229,11 @@ export interface GovernanceWorkState {
   /** Optional only for compatibility with schema-v1 records from earlier slices. */
   pendingMutations?: GovernancePendingMutation[];
   /** Optional only for compatibility with schema-v1 records from earlier slices. */
+  pendingCommits?: GovernancePendingCommit[];
+  /** Optional only for compatibility with schema-v1 records from earlier slices. */
   lifecycleTransitions?: GovernanceLifecycleTransition[];
+  /** Optional only for compatibility with schema-v1 records from earlier slices. */
+  contentBaseline?: RepositorySnapshot;
   lifecycle: WorkLifecycle;
 }
 
@@ -252,3 +323,5 @@ export function resolveGovernance(input: GovernanceInput): GovernanceDecision {
     "Direct-change evidence is incomplete, so explicit planning is required before mutation.",
   );
 }
+
+import type { RepositorySnapshot } from "./content-fingerprint.js";

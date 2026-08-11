@@ -118,9 +118,11 @@ continue the exact work item before mutation.
 
 Planned-change work may write its active `SPEC.md`, `TASKS.md`, and `TESTS.md`
 before acceptance. Source mutation requires role-neutral accepted-plan evidence
-recorded with `ged_governance`; commits require satisfied verification evidence
-newer than the latest successful write/edit evidence. Successful commits are
-milestones and do not close work automatically. `ged_lifecycle` explicitly
+bound to the exact plan bytes. The runtime snapshots known and unknown
+mutation-capable tools, executes declared verification commands, and requires
+the already-staged work scope to exactly match the verified repository snapshot
+before commit. Proven HEAD advances become milestones and do not close work
+automatically. `ged_lifecycle` explicitly
 pauses, resumes, completes, abandons, or supersedes an exact work ID with an
 auditable reason and timestamp; terminal work never reopens.
 
@@ -153,11 +155,14 @@ dependencies.
 
 GedPi's runtime guards are an accident-prevention and evidence boundary, not an
 OS sandbox. They currently enforce request binding and authoritative governance
-for Pi `write`, `edit`, and detected `git commit` calls, protect runtime-owned
-`.ged` paths through resolved symlinks, durably mark writes/edits pending before
-execution, and record implementation evidence after successful completion.
-Plan 002 broadens mutation-tool detection and binds approvals/verification to
-content and staged Git bytes.
+for known mutation-capable tools, mutating bash, and unknown extension tools;
+audited read-only tools remain available without mutating work. The runtime
+protects runtime-owned `.ged` paths through resolved symlinks, durably records
+pending operations, binds plans and verification to canonical SHA-256
+snapshots, rejects unrelated staged paths, and records commit milestones only
+after HEAD advances to the exact verified index tree. Commit pairing survives
+restart and stable snapshots reject continuously changing repositories.
+External processes outside Pi remain outside this boundary.
 
 ## Durable Memory
 

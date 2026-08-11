@@ -28,6 +28,12 @@
   abandoning, and superseding exact work IDs. Lifecycle history is append-only,
   completion requires current verification, pending mutations block
   transitions, and terminal work cannot be reopened.
+- Added content-bound governance snapshots. Accepted plans bind exact bytes,
+  mutating and unknown tools record pre/post changed paths, runtime-executed
+  checks bind verification to staged and working content, unrelated staged
+  paths and auto-staging/compound commits are rejected, and milestones require
+  proven HEAD advancement to the exact verified index tree. Pending commits are
+  durable and recoverable after restart; hook-expanded trees remain blocked.
 
 ### Dependencies
 

@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -95,6 +97,17 @@ function context(rootDir: string, sessionId = "session-a"): TestContext {
   };
 }
 
+async function initializeGit(rootDir: string): Promise<void> {
+  execFileSync("git", ["init", "-b", "main"], { cwd: rootDir });
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: rootDir,
+  });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: rootDir });
+  await writeFile(path.join(rootDir, "README.md"), "initial\n");
+  execFileSync("git", ["add", "README.md"], { cwd: rootDir });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: rootDir });
+}
+
 const directOpen = (summary = "Direct task") => ({
   action: "open",
   summary,
@@ -113,6 +126,12 @@ const plannedOpen = (summary = "Planned task") => ({
   minimumMode: "planned-change",
   risk: "normal",
   executionProfile: "coordinated",
+});
+
+const verificationParams = (summary: string) => ({
+  action: "record-verification",
+  summary,
+  checks: [{ command: process.execPath, args: ["-e", "process.exit(0)"] }],
 });
 
 async function startRequest(
@@ -145,6 +164,11 @@ async function successfulWrite(
     ctx,
   );
   expect(preflight).toEqual([undefined]);
+  const absolutePath = path.isAbsolute(filePath)
+    ? filePath
+    : path.join(ctx.cwd, filePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, `${toolCallId}\n`);
   await runtime.emit(
     "tool_result",
     {
@@ -188,6 +212,7 @@ describe("Ged governance runtime", () => {
 
   it("opens governed work, tracks successful writes, and requires fresh verification", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-work-runtime-"));
+    await initializeGit(rootDir);
     const ctx = context(rootDir);
     const runtime = runtimeHarness(["request-1", "request-2"]);
 
@@ -195,6 +220,34 @@ describe("Ged governance runtime", () => {
     expect(prompt[0]).toMatchObject({
       systemPrompt: expect.stringContaining("structured ambiguity"),
     });
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "read-only-bash",
+            toolName: "bash",
+            input: { command: "pwd" },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "mutating-bash-before-open",
+            toolName: "bash",
+            input: { command: "echo changed > file.txt" },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({ block: true });
     expect(
       await runtime.emit(
         "tool_call",
@@ -216,6 +269,10 @@ describe("Ged governance runtime", () => {
       decision: { mode: "direct-change" },
       executionProfile: "solo",
       lifecycle: "active",
+      contentBaseline: {
+        version: 1,
+        digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
     });
     expect(await readActiveWorkPointer(rootDir, "session-a")).toMatchObject({
       workId,
@@ -249,7 +306,7 @@ describe("Ged governance runtime", () => {
       )[0],
     ).toMatchObject({
       block: true,
-      reason: expect.stringContaining("pending durable implementation"),
+      reason: expect.stringContaining("pending durable completion"),
     });
     expect(await readGovernanceState(rootDir, workId)).toMatchObject({
       pendingMutations: [
@@ -259,6 +316,8 @@ describe("Ged governance runtime", () => {
         }),
       ],
     });
+    await mkdir(path.join(rootDir, "src"), { recursive: true });
+    await writeFile(path.join(rootDir, "src", "a.ts"), "write-a\n");
     await runtime.emit(
       "tool_result",
       {
@@ -298,9 +357,10 @@ describe("Ged governance runtime", () => {
       reason: expect.stringContaining("verification"),
     });
 
+    execFileSync("git", ["add", "src/a.ts"], { cwd: rootDir });
     await runtime.execute(
       "ged_governance",
-      { action: "record-verification", summary: "Focused checks passed" },
+      verificationParams("Focused checks passed"),
       ctx,
     );
     expect(
@@ -415,12 +475,21 @@ describe("Ged governance runtime", () => {
         { action: "complete", workId, reason: "Implementation finished" },
         ctx,
       ),
-    ).rejects.toThrow("no satisfied verification evidence newer");
+    ).rejects.toThrow("without content-bound verification");
     await runtime.execute(
       "ged_governance",
-      { action: "record-verification", summary: "All checks passed" },
+      verificationParams("All checks passed"),
       ctx,
     );
+    await writeFile(path.join(rootDir, "src", "a.ts"), "completion drift\n");
+    await expect(
+      runtime.execute(
+        "ged_lifecycle",
+        { action: "complete", workId, reason: "Drifted completion" },
+        ctx,
+      ),
+    ).rejects.toThrow("differs from verification");
+    await writeFile(path.join(rootDir, "src", "a.ts"), "lifecycle-write\n");
     const completed = await runtime.execute(
       "ged_lifecycle",
       { action: "complete", workId, reason: "Verified work is complete" },
@@ -454,6 +523,7 @@ describe("Ged governance runtime", () => {
 
   it("allows planned artifacts before acceptance and source writes only after acceptance", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-work-planned-"));
+    await initializeGit(rootDir);
     const ctx = context(rootDir);
     const runtime = runtimeHarness(["request-a"]);
     await startRequest(runtime, ctx);
@@ -461,20 +531,7 @@ describe("Ged governance runtime", () => {
     const workId = opened.details?.workId as string;
     const paths = await activeGedPaths(rootDir, "session-a");
 
-    expect(
-      (
-        await runtime.emit(
-          "tool_call",
-          {
-            type: "tool_call",
-            toolCallId: "plan-write",
-            toolName: "write",
-            input: { path: paths.specPath },
-          },
-          ctx,
-        )
-      )[0],
-    ).toBeUndefined();
+    await successfulWrite(runtime, ctx, "plan-write", paths.specPath);
     expect(
       (
         await runtime.emit(
@@ -502,9 +559,10 @@ describe("Ged governance runtime", () => {
       ctx,
     );
     await successfulWrite(runtime, ctx, "source-after-plan", "src/a.ts");
+    execFileSync("git", ["add", "src/a.ts"], { cwd: rootDir });
     await runtime.execute(
       "ged_governance",
-      { action: "record-verification", summary: "All planned checks passed" },
+      verificationParams("All planned checks passed"),
       ctx,
     );
     expect(
@@ -522,7 +580,7 @@ describe("Ged governance runtime", () => {
       )[0],
     ).toBeUndefined();
     expect((await readGovernanceState(rootDir, workId)).evidence).toHaveLength(
-      3,
+      4,
     );
   });
 
@@ -688,7 +746,7 @@ describe("Ged governance runtime", () => {
     const workId = opened.details?.workId as string;
     await firstRuntime.execute(
       "ged_governance",
-      { action: "record-verification", summary: "Pre-write checks passed" },
+      verificationParams("Pre-write checks passed"),
       ctx,
     );
     expect(
@@ -736,6 +794,7 @@ describe("Ged governance runtime", () => {
     const cases = [
       "missing",
       "malformed",
+      "unbound-content",
       "read-only",
       "unresolved",
       "paused",
@@ -782,7 +841,11 @@ describe("Ged governance runtime", () => {
           decision,
           executionProfile: "solo",
           lifecycle:
-            value === "read-only" || value === "unresolved" ? "active" : value,
+            value === "read-only" ||
+            value === "unresolved" ||
+            value === "unbound-content"
+              ? "active"
+              : value,
         });
       }
 
@@ -865,6 +928,566 @@ describe("Ged governance runtime", () => {
     expect((await activeGedPaths(rootDir, "session-b")).workId).toBe(
       openedB.details?.workId,
     );
+  });
+
+  it("binds accepted plans and observes bash and unknown-tool mutations", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-content-tools-"));
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute("ged_work", plannedOpen(), ctx);
+    const workId = opened.details?.workId as string;
+    const paths = await activeGedPaths(rootDir, "session-a");
+    await successfulWrite(runtime, ctx, "plan-content", paths.specPath);
+    await runtime.execute(
+      "ged_governance",
+      { action: "accept-plan", summary: "Accept exact plan bytes" },
+      ctx,
+    );
+    await writeFile(paths.specPath, "drifted plan bytes\n");
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "blocked-plan-drift",
+            toolName: "write",
+            input: { path: "src/a.ts" },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("plan bytes changed"),
+    });
+    await runtime.execute(
+      "ged_governance",
+      { action: "accept-plan", summary: "Reaccept drifted plan" },
+      ctx,
+    );
+
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "bash-mutation",
+            toolName: "bash",
+            input: { command: "sed -i.bak s/initial/changed/ README.md" },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    await writeFile(path.join(rootDir, "README.md"), "changed\n");
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "bash-mutation",
+        toolName: "bash",
+        input: {},
+        content: [],
+        isError: false,
+      },
+      ctx,
+    );
+    let state = await readGovernanceState(rootDir, workId);
+    expect(state.evidence.at(-1)).toMatchObject({
+      kind: "implementation",
+      binding: {
+        type: "mutation-content",
+        changedPaths: ["README.md"],
+      },
+    });
+
+    const evidenceCount = state.evidence.length;
+    await runtime.emit(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "no-op-script",
+        toolName: "bash",
+        input: { command: "node noop.js" },
+      },
+      ctx,
+    );
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "no-op-script",
+        toolName: "bash",
+        input: {},
+        content: [],
+        isError: false,
+      },
+      ctx,
+    );
+    expect((await readGovernanceState(rootDir, workId)).evidence).toHaveLength(
+      evidenceCount,
+    );
+
+    await runtime.emit(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "modify-restore",
+        toolName: "formatter_like",
+        input: {},
+      },
+      ctx,
+    );
+    await writeFile(path.join(rootDir, "README.md"), "temporary\n");
+    await writeFile(path.join(rootDir, "README.md"), "changed\n");
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "modify-restore",
+        toolName: "formatter_like",
+        input: {},
+        content: [],
+        isError: false,
+      },
+      ctx,
+    );
+    expect((await readGovernanceState(rootDir, workId)).evidence).toHaveLength(
+      evidenceCount,
+    );
+
+    await runtime.emit(
+      "tool_call",
+      {
+        type: "tool_call",
+        toolCallId: "unknown-mutator",
+        toolName: "apply_patch_like",
+        input: {},
+      },
+      ctx,
+    );
+    await writeFile(path.join(rootDir, "unknown.txt"), "changed\n");
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "unknown-mutator",
+        toolName: "apply_patch_like",
+        input: {},
+        content: [],
+        isError: true,
+      },
+      ctx,
+    );
+    state = await readGovernanceState(rootDir, workId);
+    expect(state.evidence.at(-1)).toMatchObject({
+      kind: "implementation",
+      binding: {
+        type: "mutation-content",
+        changedPaths: ["unknown.txt"],
+      },
+    });
+  });
+
+  it("executes content-bound verification and records proven commit milestones", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-content-commit-"),
+    );
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute("ged_work", directOpen(), ctx);
+    const workId = opened.details?.workId as string;
+    await successfulWrite(runtime, ctx, "commit-source", "src/a.ts");
+    execFileSync("git", ["add", "src/a.ts"], { cwd: rootDir });
+    await expect(
+      runtime.execute(
+        "ged_governance",
+        {
+          ...verificationParams("Review has findings"),
+          review: {
+            outcome: "findings",
+            findings: ["Blocking review finding"],
+          },
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("review findings are non-authorizing");
+    await expect(
+      runtime.execute(
+        "ged_governance",
+        {
+          action: "record-verification",
+          summary: "Failing check",
+          checks: [
+            { command: process.execPath, args: ["-e", "process.exit(2)"] },
+          ],
+        },
+        ctx,
+      ),
+    ).rejects.toThrow("Verification commands failed");
+    await runtime.execute(
+      "ged_governance",
+      verificationParams("Passing check"),
+      ctx,
+    );
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "compound-commit",
+            toolName: "bash",
+            input: { command: 'git commit -m "bad" || true' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("compound"),
+    });
+    for (const [toolCallId, command, reason] of [
+      [
+        "absolute-git-auto-stage",
+        '/usr/bin/git commit -am "bad"',
+        "may not stage content",
+      ],
+      [
+        "env-git-auto-stage",
+        'env TEST=1 git commit -am "bad"',
+        "may not stage content",
+      ],
+      [
+        "expanded-git-flags",
+        'command git commit $FLAGS -m "bad"',
+        "compound commit commands",
+      ],
+    ] as const) {
+      expect(
+        (
+          await runtime.emit(
+            "tool_call",
+            {
+              type: "tool_call",
+              toolCallId,
+              toolName: "bash",
+              input: { command },
+            },
+            ctx,
+          )
+        )[0],
+      ).toMatchObject({ block: true, reason: expect.stringContaining(reason) });
+    }
+
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "proven-commit",
+            toolName: "bash",
+            input: { command: 'git commit -m "verified"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    execFileSync("git", ["commit", "-m", "verified"], { cwd: rootDir });
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "proven-commit",
+        toolName: "bash",
+        input: {},
+        content: [],
+        isError: false,
+      },
+      ctx,
+    );
+    let state = await readGovernanceState(rootDir, workId);
+    expect(state.lifecycle).toBe("active");
+    expect(
+      state.evidence.filter((entry) => entry.kind === "milestone"),
+    ).toEqual([
+      expect.objectContaining({
+        outcome: "observed",
+        binding: expect.objectContaining({ type: "commit-milestone" }),
+      }),
+    ]);
+
+    await runtime.execute(
+      "ged_governance",
+      verificationParams("Verify current HEAD for amend"),
+      ctx,
+    );
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "auto-stage-commit",
+            toolName: "bash",
+            input: { command: 'git commit -am "forbidden"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("may not stage content"),
+    });
+    await writeFile(path.join(rootDir, "README.md"), "drift\n");
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "drifted-amend",
+            toolName: "bash",
+            input: { command: 'git commit --amend -m "drifted"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("differs from the verified snapshot"),
+    });
+    await writeFile(path.join(rootDir, "README.md"), "initial\n");
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "amend-commit",
+            toolName: "bash",
+            input: { command: 'git commit --amend -m "amended"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    execFileSync("git", ["commit", "--amend", "-m", "amended"], {
+      cwd: rootDir,
+    });
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "amend-commit",
+        toolName: "bash",
+        input: {},
+        content: [],
+        isError: false,
+      },
+      ctx,
+    );
+    state = await readGovernanceState(rootDir, workId);
+    expect(
+      state.evidence.filter((entry) => entry.kind === "milestone"),
+    ).toHaveLength(2);
+
+    await successfulWrite(runtime, ctx, "hook-source", "src/b.ts");
+    execFileSync("git", ["add", "src/b.ts"], { cwd: rootDir });
+    await runtime.execute(
+      "ged_governance",
+      verificationParams("Verify hook fixture"),
+      ctx,
+    );
+    const hookPath = path.join(rootDir, ".git", "hooks", "pre-commit");
+    await writeFile(hookPath, "#!/bin/sh\nexit 1\n");
+    await chmod(hookPath, 0o755);
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "failed-hook-commit",
+            toolName: "bash",
+            input: { command: 'git commit -m "blocked by hook"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    expect(() =>
+      execFileSync("git", ["commit", "-m", "blocked by hook"], {
+        cwd: rootDir,
+        stdio: "pipe",
+      }),
+    ).toThrow();
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "failed-hook-commit",
+        toolName: "bash",
+        input: {},
+        content: [],
+        isError: true,
+      },
+      ctx,
+    );
+    state = await readGovernanceState(rootDir, workId);
+    expect(
+      state.evidence.filter((entry) => entry.kind === "milestone"),
+    ).toHaveLength(2);
+  });
+
+  it("rejects staged baseline changes outside observed work scope", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-content-unrelated-"),
+    );
+    await initializeGit(rootDir);
+    await writeFile(path.join(rootDir, "README.md"), "user staged change\n");
+    execFileSync("git", ["add", "README.md"], { cwd: rootDir });
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    await runtime.execute("ged_work", directOpen(), ctx);
+    await runtime.execute(
+      "ged_governance",
+      verificationParams("Checks do not claim baseline user changes"),
+      ctx,
+    );
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "unrelated-commit",
+            toolName: "bash",
+            input: { command: 'git commit -m "unrelated"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("unrelated staged paths"),
+    });
+  });
+
+  it("keeps hook-expanded commit trees durably unproven", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-content-hook-tree-"),
+    );
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute("ged_work", directOpen(), ctx);
+    const workId = opened.details?.workId as string;
+    await successfulWrite(runtime, ctx, "hook-tree-source", "src/a.ts");
+    execFileSync("git", ["add", "src/a.ts"], { cwd: rootDir });
+    await runtime.execute(
+      "ged_governance",
+      verificationParams("Verify intended tree"),
+      ctx,
+    );
+    const hookPath = path.join(rootDir, ".git", "hooks", "pre-commit");
+    await writeFile(
+      hookPath,
+      "#!/bin/sh\necho injected > hook-added.txt\ngit add hook-added.txt\n",
+    );
+    await chmod(hookPath, 0o755);
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "hook-expanded-commit",
+            toolName: "bash",
+            input: { command: 'git commit -m "hook expanded"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    execFileSync("git", ["commit", "-m", "hook expanded"], { cwd: rootDir });
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "hook-expanded-commit",
+        toolName: "bash",
+        input: {},
+        content: [],
+        isError: false,
+      },
+      ctx,
+    );
+    const state = await readGovernanceState(rootDir, workId);
+    expect(
+      state.evidence.filter((entry) => entry.kind === "milestone"),
+    ).toEqual([]);
+    expect(state.pendingCommits).toHaveLength(1);
+
+    const restarted = runtimeHarness(["request-b"]);
+    await startRequest(restarted, ctx);
+    await expect(
+      restarted.execute("ged_work", { action: "continue", workId }, ctx),
+    ).rejects.toThrow("resulting tree does not match verified staged content");
+  });
+
+  it("reconciles a proven commit after runtime restart", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-content-reconcile-"),
+    );
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute("ged_work", directOpen(), ctx);
+    const workId = opened.details?.workId as string;
+    await successfulWrite(runtime, ctx, "reconcile-source", "src/a.ts");
+    execFileSync("git", ["add", "src/a.ts"], { cwd: rootDir });
+    await runtime.execute(
+      "ged_governance",
+      verificationParams("Verify before interrupted commit"),
+      ctx,
+    );
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "interrupted-commit",
+            toolName: "bash",
+            input: { command: 'git commit -m "interrupted result"' },
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    execFileSync("git", ["commit", "-m", "interrupted result"], {
+      cwd: rootDir,
+    });
+
+    const restarted = runtimeHarness(["request-b"]);
+    await startRequest(restarted, ctx);
+    await restarted.execute("ged_work", { action: "continue", workId }, ctx);
+    const state = await readGovernanceState(rootDir, workId);
+    expect(state.pendingCommits).toEqual([]);
+    expect(
+      state.evidence.filter((entry) => entry.kind === "milestone"),
+    ).toHaveLength(1);
   });
 
   it("migrates legacy checkpoints before runtime bootstrap selection", async () => {

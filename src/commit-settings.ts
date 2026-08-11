@@ -32,7 +32,7 @@ Current setting: ${preference}
 
 ${instructions[preference]}
 
-Always use the normal git command path so governance guards still apply. Never commit before planned checks pass, findings are adjudicated, and current verification evidence is recorded. A commit is a milestone and never changes work lifecycle; use ged_lifecycle explicitly. Never push unless the user explicitly asks.`;
+Always use the normal git command path so governance guards still apply. Stage only observed work-scope paths before runtime verification; never use commit auto-stage flags or compound commit commands. Never commit before planned checks pass, findings are adjudicated, and current content-bound verification evidence is recorded. A proven HEAD advance is a milestone and never changes work lifecycle; use ged_lifecycle explicitly. Never push unless the user explicitly asks.`;
 }
 
 export function buildPlanReviewWorkflowPrompt(

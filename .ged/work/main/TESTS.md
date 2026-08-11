@@ -1,8 +1,8 @@
-# Tests: Task-scoped governance kernel — slice 6
+# Tests: Content-bound governance (Plan 002)
 
 ## Focused
 
-- `npm test -- tests/work-runtime.test.ts tests/brain.test.ts tests/governance-store.test.ts`
+- `npm test -- tests/content-fingerprint.test.ts tests/governance-store.test.ts tests/work-runtime.test.ts tests/brain.test.ts`
 - `npm run check`
 - `npm run lint`
 
@@ -15,14 +15,12 @@
 
 ## Scenario acceptance
 
-- Active work can pause; paused work blocks mutation and resumes only through an
-  explicit exact-work transition.
-- Complete requires current verification after the latest implementation.
-- Completed, abandoned, and superseded work reject continue and all later
-  lifecycle transitions.
-- Any durable pending mutation blocks lifecycle transition.
-- Accepted transitions append one immutable reason/timestamp record and advance
-  revision exactly once under concurrent callers.
-- Multiple successful commits leave work active until explicit completion.
-- Staffing settings, legacy checkpoints, and subagent results do not affect
-  lifecycle.
+- Canonical snapshots cover empty, staged, unstaged, binary, untracked, rename,
+  deletion, spaces, linked worktree, and large-file repositories.
+- Exact plan-byte edits invalidate accepted-plan authority.
+- `sed -i`, redirection, formatter/script, and unknown mutators are detected by
+  pre/post snapshots; no-op and modify-restore final equality remain clean.
+- Verification failures/malformed commands are non-authorizing.
+- Verified staged bytes commit; drift, auto-stage flags, unrelated staged paths,
+  failed hooks, compound commands, and unchanged HEAD do not record milestones.
+- Amend and multiple verified commits work while lifecycle remains active.

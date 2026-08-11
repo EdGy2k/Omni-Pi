@@ -72,7 +72,8 @@ Mutating work calls `ged_work open` with structured governance evidence.
 Planned-change work writes bounded SPEC/TASKS/TESTS artifacts and records
 accepted-plan evidence with `ged_governance` before source mutation.
 Direct-change work skips plan ceremony. After checks and finding adjudication,
-record current verification evidence before commit. Optional assistants can
+stage only observed work-scope paths, then let `ged_governance` execute checks
+and bind verification to the exact snapshot before commit. Optional assistants can
 inspect, draft, critique, implement isolated slices, or verify, but the main
 brain accepts evidence and retains all scope/publication authority.
 Lifecycle is explicit: use `ged_lifecycle` with an exact work ID and reason;

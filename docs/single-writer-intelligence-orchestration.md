@@ -1,8 +1,8 @@
 # Governance-First Adaptive Orchestration
 
-Status: approved target; governance foundation implemented through Plan 001
-slice 5. Content-bound enforcement and adaptive staffing remain ordered follow-up
-work in Plans 002 and 003.
+Status: approved target; governance and content-bound enforcement are
+implemented through Plan 002. Adaptive staffing remains follow-up work in Plan
+003.
 
 ## Purpose
 
@@ -76,25 +76,33 @@ never copied into authorizing fields or selected as current work.
 
 ### Role-neutral transitions
 
-`ged_governance accept-plan` appends satisfied plan evidence after the
+`ged_governance accept-plan` fingerprints exact SPEC/TASKS/TESTS bytes and
+appends satisfied plan evidence after the
 coordinator accepts the canonical planned artifacts and any configured human
 review is complete. Planned-change source mutation requires the latest plan
 evidence to be satisfied.
 
-`ged_governance record-verification` appends satisfied verification evidence
-after checks pass and findings are adjudicated. A commit requires satisfied
-verification evidence later in append order than the latest successful
-implementation evidence. A later failed plan or verification record supersedes
+`ged_governance record-verification` executes argv-based checks, records bounded
+outputs/exits and non-secret runtime keys, and binds satisfied evidence to the
+full repository snapshot plus observed work scope. Structured review findings,
+failed commands, unscoped changes, malformed evidence, and process success
+alone are non-authorizing. A later failed plan or verification record supersedes
 an earlier satisfied record of the same kind.
 
-Successful Pi `write`/`edit` calls append runtime-owned implementation evidence
-after tool completion. Calls enter authoritative durable pending state before
-execution; failed results clear it, while a pending call blocks commit even
-after runtime restart. Assistant results can inform the coordinator but never
-write these transitions automatically.
+Known mutation-capable calls, mutating bash, and unknown tools enter
+authoritative durable pending state before execution. Pre/post snapshots append
+implementation evidence with exact changed paths whenever final content differs,
+even after a failed process; final no-op/restore calls clear pending state. A
+pending call blocks commit even after restart. Assistant results can inform the
+coordinator but never write these transitions automatically.
 
-A successful commit is a milestone. It does not consume plan evidence or close
-current or legacy work.
+Before commit, staged paths must be inside observed work scope and the full
+current snapshot must equal current verification. Auto-staging and compound
+commit commands are rejected. A milestone is recorded only when HEAD advances
+and the committed tree exactly equals the pre-call verified index tree. Commit
+pairing is durable and reconciled after restart; mismatched hook-expanded trees
+remain fail-closed. A milestone does not consume plan evidence or close current
+or legacy work.
 
 ### Explicit lifecycle
 
@@ -122,11 +130,11 @@ including symlinks, rather than trusting a `.ged` substring:
 
 ## Current enforcement boundary
 
-The current runtime intercepts Pi `write`, `edit`, and detected `git commit`
-commands. This is an accident-prevention and evidence boundary, not an OS
-sandbox. Plan 002 adds conservative mutation detection for broader shell and
-unknown tools, canonical content fingerprints, staged-diff verification, and
-approval invalidation when governed bytes change.
+The runtime uses conservative tool classification plus pre/post repository
+snapshots. This is an accident-prevention and evidence boundary, not an OS
+sandbox: processes outside Pi and adversarial filesystem races cannot be
+attributed with OS-level certainty. Snapshots must stabilize across repeated
+captures, and large files use streaming full-content hashes.
 
 ## Execution staffing plane
 

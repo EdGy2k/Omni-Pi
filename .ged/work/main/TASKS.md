@@ -1,47 +1,28 @@
-# Tasks: Task-scoped governance kernel
+# Tasks: Content-bound governance (Plan 002)
 
-## Completed slices
+## Slice 1 — Canonical repository snapshots
 
-- [x] Slice 1 — Pure governance resolver.
-- [x] Slice 2 — Task identity and per-request selection.
+- [x] Add versioned canonical hash/record helpers and Git snapshot contracts.
+- [x] Cover staged, unstaged, untracked, binary, rename, deletion, spaces,
+  worktrees, no-Git, and large-file behavior.
+- [x] Store the opening baseline in authoritative governance state.
 
-## Slice 3 — Authoritative governance state
+## Slice 2 — Plan and mutation binding
 
-- [x] Add canonical work-state, approval, and evidence contracts.
-- [x] Add strict structured-state parsing and initialization.
-- [x] Add serialized CAS updates and lossless evidence appends.
-- [x] Add deterministic projection and regeneration.
-- [x] Run focused/full checks, independent review, and commit.
+- [x] Bind accepted plan evidence to exact SPEC/TASKS/TESTS bytes and paths.
+- [x] Recompute plan binding before planned source mutation.
+- [x] Guard mutation-capable bash/unknown tools with durable pre/post snapshots.
+- [x] Persist observed changed paths and leave no-op/failed-no-change calls clean.
 
-## Slice 4 — Fail-closed legacy migration
+## Slice 3 — Verification and commit binding
 
-- [x] Add conservative legacy discovery and classification.
-- [x] Add immutable migration plan, exact backup, and phase journal.
-- [x] Add paused, non-selectable import with migration evidence.
-- [x] Run migration before bootstrap selection and current-version checks.
-- [x] Cover ambiguity, corruption, unsupported schemas, interruption,
-  idempotence, and concurrent callers.
-- [x] Run focused/full checks, independent review, and commit.
+- [x] Execute structured verification commands and persist bounded results.
+- [x] Bind verification to the full snapshot, staged digest, and observed scope.
+- [x] Reject drift, unrelated staged paths, auto-staging, and compound commits.
+- [x] Record commit milestones only after proven HEAD/tree advancement.
 
-## Slice 5 — Staffing-independent governance guards
+## Slice 4 — Integration, docs, and completion
 
-- [x] Initialize governance from structured `ged_work open` evidence.
-- [x] Add role-neutral plan/verification evidence transitions.
-- [x] Enforce mode, plan, lifecycle, and fresh verification from authoritative
-  state with subagents enabled or disabled.
-- [x] Remove legacy role guards, completion authority, and commit auto-close.
-- [x] Migrate workflow prompts and injected status to governance vocabulary.
-- [x] Cover durable pending writes, protected paths, the solo/staffed governance
-  matrix, regressions, and commit.
-
-## Slice 6 — Explicit lifecycle transitions
-
-- [x] Add strict lifecycle transition contracts and serialized store mutation.
-- [x] Register exact-work `ged_lifecycle` pause/resume/complete/abandon/
-  supersede actions.
-- [x] Enforce transition graph, pending-write exclusion, and verified
-  completion.
-- [x] Update projections, prompts, docs, changelog, and Plan 001 status.
-- [x] Cover recovery, terminal rejection, multi-commit behavior, and staffing/
-  legacy non-authority.
-- [x] Run focused/full checks, independent review, and commit.
+- [x] Cover staffing/process-result non-authority and multi-commit behavior.
+- [x] Update prompts, docs, changelog, architecture, and Plan 002 status.
+- [x] Run focused/full verification, independent review, and commit.

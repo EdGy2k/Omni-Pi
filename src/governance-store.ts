@@ -5,6 +5,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { writeFileAtomic } from "./atomic.js";
 import {
+  isRepositorySnapshot,
+  type RepositorySnapshot,
+} from "./content-fingerprint.js";
+import {
   gedPathsForWorkId,
   isGeneratedWorkId,
   readWorkItemMeta,
@@ -14,7 +18,9 @@ import {
   type ExecutionProfile,
   type GovernanceDecision,
   type GovernanceEvidence,
+  type GovernanceEvidenceBinding,
   type GovernanceLifecycleTransition,
+  type GovernancePendingCommit,
   type GovernancePendingMutation,
   type GovernanceWorkState,
   type LifecycleAction,
@@ -39,6 +45,7 @@ const EVIDENCE_KINDS = new Set([
   "plan",
   "implementation",
   "verification",
+  "milestone",
   "approval",
   "migration-required",
 ]);
@@ -81,6 +88,7 @@ export interface InitializeGovernanceStateInput {
   currentSlice?: string | null;
   lifecycle?: WorkLifecycle;
   evidence?: GovernanceEvidence[];
+  contentBaseline?: RepositorySnapshot;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -119,6 +127,118 @@ function validDecision(value: unknown): value is GovernanceDecision {
   );
 }
 
+const DIGEST = /^[a-f0-9]{64}$/u;
+
+function validStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => nonBlank(entry)) &&
+    new Set(value).size === value.length
+  );
+}
+
+function validEvidenceBinding(
+  value: unknown,
+): value is GovernanceEvidenceBinding {
+  if (!isObject(value) || typeof value.type !== "string") return false;
+  if (value.type === "plan-content") {
+    return (
+      hasOnlyKeys(value, ["type", "digest", "paths"]) &&
+      typeof value.digest === "string" &&
+      DIGEST.test(value.digest) &&
+      validStringArray(value.paths)
+    );
+  }
+  if (value.type === "mutation-content") {
+    return (
+      hasOnlyKeys(value, [
+        "type",
+        "beforeDigest",
+        "afterDigest",
+        "changedPaths",
+      ]) &&
+      typeof value.beforeDigest === "string" &&
+      DIGEST.test(value.beforeDigest) &&
+      typeof value.afterDigest === "string" &&
+      DIGEST.test(value.afterDigest) &&
+      value.beforeDigest !== value.afterDigest &&
+      validStringArray(value.changedPaths)
+    );
+  }
+  if (value.type === "verification-content") {
+    return (
+      hasOnlyKeys(value, [
+        "type",
+        "snapshot",
+        "scopePaths",
+        "commands",
+        "environment",
+        "review",
+        "residualRisks",
+      ]) &&
+      isRepositorySnapshot(value.snapshot) &&
+      validStringArray(value.scopePaths) &&
+      Array.isArray(value.commands) &&
+      value.commands.length > 0 &&
+      value.commands.every(
+        (command) =>
+          isObject(command) &&
+          hasOnlyKeys(command, [
+            "command",
+            "args",
+            "exitCode",
+            "stdout",
+            "stderr",
+            "durationMs",
+          ]) &&
+          nonBlank(command.command) &&
+          Array.isArray(command.args) &&
+          command.args.every((entry) => typeof entry === "string") &&
+          Number.isSafeInteger(command.exitCode) &&
+          typeof command.stdout === "string" &&
+          typeof command.stderr === "string" &&
+          typeof command.durationMs === "number" &&
+          Number.isFinite(command.durationMs) &&
+          command.durationMs >= 0,
+      ) &&
+      isObject(value.environment) &&
+      hasOnlyKeys(value.environment, ["node", "platform", "arch"]) &&
+      nonBlank(value.environment.node) &&
+      nonBlank(value.environment.platform) &&
+      nonBlank(value.environment.arch) &&
+      (value.review === undefined ||
+        (isObject(value.review) &&
+          hasOnlyKeys(value.review, ["outcome", "findings"]) &&
+          (value.review.outcome === "clean" ||
+            value.review.outcome === "findings") &&
+          validStringArray(value.review.findings))) &&
+      validStringArray(value.residualRisks)
+    );
+  }
+  if (value.type === "commit-milestone") {
+    return (
+      hasOnlyKeys(value, [
+        "type",
+        "beforeHead",
+        "afterHead",
+        "committedTree",
+        "verifiedSnapshotDigest",
+      ]) &&
+      (value.beforeHead === null ||
+        (typeof value.beforeHead === "string" &&
+          /^[a-f0-9]{40,64}$/u.test(value.beforeHead))) &&
+      typeof value.afterHead === "string" &&
+      /^[a-f0-9]{40,64}$/u.test(value.afterHead) &&
+      value.beforeHead !== value.afterHead &&
+      typeof value.committedTree === "string" &&
+      /^[a-f0-9]{40,64}$/u.test(value.committedTree) &&
+      typeof value.verifiedSnapshotDigest === "string" &&
+      DIGEST.test(value.verifiedSnapshotDigest)
+    );
+  }
+  return false;
+}
+
 function validEvidence(value: unknown): value is GovernanceEvidence {
   if (!isObject(value)) return false;
   return (
@@ -130,6 +250,7 @@ function validEvidence(value: unknown): value is GovernanceEvidence {
       "recordedAt",
       "summary",
       "outcome",
+      "binding",
     ]) &&
     nonBlank(value.id) &&
     typeof value.kind === "string" &&
@@ -140,7 +261,12 @@ function validEvidence(value: unknown): value is GovernanceEvidence {
     validDate(value.recordedAt) &&
     nonBlank(value.summary) &&
     typeof value.outcome === "string" &&
-    EVIDENCE_OUTCOMES.has(value.outcome)
+    EVIDENCE_OUTCOMES.has(value.outcome) &&
+    (value.binding === undefined || validEvidenceBinding(value.binding)) &&
+    (value.kind !== "milestone" ||
+      (value.outcome === "observed" &&
+        isObject(value.binding) &&
+        value.binding.type === "commit-milestone"))
   );
 }
 
@@ -176,6 +302,38 @@ function validPendingMutation(
     nonBlank(value.requestId) &&
     nonBlank(value.toolCallId) &&
     nonBlank(value.target) &&
+    validDate(value.startedAt)
+  );
+}
+
+function validPendingCommit(value: unknown): value is GovernancePendingCommit {
+  if (!isObject(value)) return false;
+  return (
+    hasOnlyKeys(value, [
+      "id",
+      "requestId",
+      "toolCallId",
+      "beforeHead",
+      "expectedTree",
+      "unstagedDigest",
+      "untrackedDigest",
+      "verifiedSnapshotDigest",
+      "startedAt",
+    ]) &&
+    nonBlank(value.id) &&
+    nonBlank(value.requestId) &&
+    nonBlank(value.toolCallId) &&
+    (value.beforeHead === null ||
+      (typeof value.beforeHead === "string" &&
+        /^[a-f0-9]{40,64}$/u.test(value.beforeHead))) &&
+    typeof value.expectedTree === "string" &&
+    /^[a-f0-9]{40,64}$/u.test(value.expectedTree) &&
+    typeof value.unstagedDigest === "string" &&
+    DIGEST.test(value.unstagedDigest) &&
+    typeof value.untrackedDigest === "string" &&
+    DIGEST.test(value.untrackedDigest) &&
+    typeof value.verifiedSnapshotDigest === "string" &&
+    DIGEST.test(value.verifiedSnapshotDigest) &&
     validDate(value.startedAt)
   );
 }
@@ -217,7 +375,9 @@ function validateState(value: unknown): GovernanceWorkState {
   const approvals = value.approvals;
   const evidence = value.evidence;
   const pendingMutations = value.pendingMutations;
+  const pendingCommits = value.pendingCommits;
   const lifecycleTransitions = value.lifecycleTransitions;
+  const contentBaseline = value.contentBaseline;
   if (
     !hasOnlyKeys(value, [
       "schemaVersion",
@@ -233,7 +393,9 @@ function validateState(value: unknown): GovernanceWorkState {
       "approvals",
       "evidence",
       "pendingMutations",
+      "pendingCommits",
       "lifecycleTransitions",
+      "contentBaseline",
       "lifecycle",
     ]) ||
     value.schemaVersion !== 1 ||
@@ -275,10 +437,16 @@ function validateState(value: unknown): GovernanceWorkState {
         pendingMutations.every(validPendingMutation))
     ) ||
     !(
+      pendingCommits === undefined ||
+      (Array.isArray(pendingCommits) &&
+        pendingCommits.every(validPendingCommit))
+    ) ||
+    !(
       lifecycleTransitions === undefined ||
       (Array.isArray(lifecycleTransitions) &&
         lifecycleTransitions.every(validLifecycleTransition))
     ) ||
+    !(contentBaseline === undefined || isRepositorySnapshot(contentBaseline)) ||
     typeof value.lifecycle !== "string" ||
     !WORK_LIFECYCLES.includes(
       value.lifecycle as (typeof WORK_LIFECYCLES)[number],
@@ -294,6 +462,9 @@ function validateState(value: unknown): GovernanceWorkState {
   const pendingIds = (pendingMutations ?? []).map(
     (entry) => (entry as GovernancePendingMutation).id,
   );
+  const pendingCommitIds = (pendingCommits ?? []).map(
+    (entry) => (entry as GovernancePendingCommit).id,
+  );
   const lifecycleIds = (lifecycleTransitions ?? []).map(
     (entry) => (entry as GovernanceLifecycleTransition).id,
   );
@@ -301,6 +472,7 @@ function validateState(value: unknown): GovernanceWorkState {
     new Set(evidenceIds).size !== evidenceIds.length ||
     new Set(approvalIds).size !== approvalIds.length ||
     new Set(pendingIds).size !== pendingIds.length ||
+    new Set(pendingCommitIds).size !== pendingCommitIds.length ||
     new Set(lifecycleIds).size !== lifecycleIds.length
   ) {
     throw new GovernanceStoreError(
@@ -425,6 +597,9 @@ export function governanceActionBlockReason(
   ) {
     return `Ged work ${state.workId} requires legacy migration review and cannot authorize mutation.`;
   }
+  if ((state.pendingCommits?.length ?? 0) > 0) {
+    return `Ged work ${state.workId} has an unproven commit pending reconciliation.`;
+  }
   if (state.decision.mode === "read-only") {
     return `Ged work ${state.workId} is read-only and cannot authorize mutation.`;
   }
@@ -507,7 +682,9 @@ export function renderGovernanceProjection(state: GovernanceWorkState): string {
         ? "A user-owned decision is required"
         : (state.pendingMutations?.length ?? 0) > 0
           ? "A mutation is pending durable completion evidence"
-          : "None";
+          : (state.pendingCommits?.length ?? 0) > 0
+            ? "A commit is pending durable reconciliation"
+            : "None";
   const phase =
     state.lifecycle === "active"
       ? "Build"
@@ -544,7 +721,9 @@ Next Step: ${nextStep}
 - Evidence records: ${state.evidence.length}
 - Approval records: ${state.approvals.length}
 - Pending mutations: ${state.pendingMutations?.length ?? 0}
+- Pending commits: ${state.pendingCommits?.length ?? 0}
 - Lifecycle transitions: ${state.lifecycleTransitions?.length ?? 0}
+- Content baseline: ${state.contentBaseline?.digest ?? "legacy-unbound"}
 `;
 }
 
@@ -612,7 +791,11 @@ export async function initializeGovernanceState(
       approvals: [],
       evidence: input.evidence ?? [],
       pendingMutations: [],
+      pendingCommits: [],
       lifecycleTransitions: [],
+      ...(input.contentBaseline
+        ? { contentBaseline: input.contentBaseline }
+        : {}),
       lifecycle: input.lifecycle ?? "active",
     });
     await writeStructuredState(rootDir, workId, state);
@@ -643,6 +826,8 @@ export async function compareAndSwapGovernanceState(
       candidate.schemaVersion !== current.schemaVersion ||
       candidate.createdAt !== current.createdAt ||
       candidate.summary !== current.summary ||
+      JSON.stringify(candidate.contentBaseline) !==
+        JSON.stringify(current.contentBaseline) ||
       candidate.lifecycle !== current.lifecycle ||
       JSON.stringify(candidate.lifecycleTransitions ?? []) !==
         JSON.stringify(current.lifecycleTransitions ?? []) ||
@@ -728,6 +913,7 @@ export async function beginGovernanceMutation(
   rootDir: string,
   workId: string,
   pending: GovernancePendingMutation,
+  action: Exclude<GovernanceGuardAction, "commit"> = "source-mutation",
   now = new Date(),
 ): Promise<GovernanceWorkState> {
   if (!validPendingMutation(pending)) {
@@ -739,7 +925,7 @@ export async function beginGovernanceMutation(
   const paths = gedPathsForWorkId(rootDir, workId);
   return withProcessQueue(paths.governancePath, async () => {
     const current = await readGovernanceState(rootDir, workId);
-    const blocked = governanceActionBlockReason(current, "source-mutation");
+    const blocked = governanceActionBlockReason(current, action);
     if (blocked) {
       throw new GovernanceStoreError(blocked, "governance-blocked");
     }
@@ -842,6 +1028,128 @@ export async function clearGovernanceMutation(
       pendingMutations: (current.pendingMutations ?? []).filter(
         (entry) => entry.id !== pendingId,
       ),
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function beginGovernanceCommit(
+  rootDir: string,
+  workId: string,
+  pending: GovernancePendingCommit,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  if (!validPendingCommit(pending)) {
+    throw new GovernanceStoreError(
+      "Pending commit has an invalid shape.",
+      "invalid-state",
+    );
+  }
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    const blocked = governanceActionBlockReason(current, "commit");
+    if (blocked) throw new GovernanceStoreError(blocked, "governance-blocked");
+    if ((current.pendingCommits?.length ?? 0) > 0) {
+      throw new GovernanceStoreError(
+        `Ged work ${workId} already has a pending commit.`,
+        "governance-blocked",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      pendingCommits: [...(current.pendingCommits ?? []), pending],
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function clearGovernanceCommit(
+  rootDir: string,
+  workId: string,
+  pendingId: string,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    if (
+      !(current.pendingCommits ?? []).some((entry) => entry.id === pendingId)
+    ) {
+      throw new GovernanceStoreError(
+        `Pending commit ${pendingId} does not exist.`,
+        "invalid-state",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      pendingCommits: (current.pendingCommits ?? []).filter(
+        (entry) => entry.id !== pendingId,
+      ),
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function completeGovernanceCommit(
+  rootDir: string,
+  workId: string,
+  pendingId: string,
+  record: GovernanceEvidence,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  if (
+    record.kind !== "milestone" ||
+    record.outcome !== "observed" ||
+    record.binding?.type !== "commit-milestone" ||
+    !validEvidence(record)
+  ) {
+    throw new GovernanceStoreError(
+      "Commit completion requires observed milestone evidence.",
+      "invalid-state",
+    );
+  }
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    const pending = (current.pendingCommits ?? []).find(
+      (entry) => entry.id === pendingId,
+    );
+    if (!pending) {
+      throw new GovernanceStoreError(
+        `Pending commit ${pendingId} does not exist.`,
+        "invalid-state",
+      );
+    }
+    if (
+      record.binding?.type !== "commit-milestone" ||
+      record.binding.beforeHead !== pending.beforeHead ||
+      record.binding.committedTree !== pending.expectedTree ||
+      record.binding.verifiedSnapshotDigest !== pending.verifiedSnapshotDigest
+    ) {
+      throw new GovernanceStoreError(
+        "Commit milestone does not match its durable pending commit.",
+        "invalid-state",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      pendingCommits: (current.pendingCommits ?? []).filter(
+        (entry) => entry.id !== pendingId,
+      ),
+      evidence: [...current.evidence, record],
     });
     await writeStructuredState(rootDir, workId, next);
     await writeProjectionFromState(rootDir, next);
@@ -962,6 +1270,12 @@ export async function transitionGovernanceLifecycle(
     if ((current.pendingMutations?.length ?? 0) > 0) {
       throw new GovernanceStoreError(
         `Ged work ${workId} has a pending mutation and cannot change lifecycle.`,
+        "governance-blocked",
+      );
+    }
+    if ((current.pendingCommits?.length ?? 0) > 0) {
+      throw new GovernanceStoreError(
+        `Ged work ${workId} has an unproven commit and cannot change lifecycle.`,
         "governance-blocked",
       );
     }

@@ -1,15 +1,25 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  captureRepositorySnapshot,
+  changedPathsBetween,
+  fingerprintFileSet,
+  type RepositorySnapshot,
+  snapshotsEqual,
+} from "./content-fingerprint.js";
 import {
   type ActiveWorkPointer,
   bindGedWork,
   clearActiveWorkSession,
   continueGedWork,
   ensureActiveGedWork,
+  gedPathsForWorkId,
   isActiveWorkBoundToRequest,
   type OpenedGedWork,
   openGedWork,
@@ -19,13 +29,18 @@ import {
 } from "./ged-paths.js";
 import {
   type ExecutionProfile,
+  type GovernanceEvidence,
   type GovernanceWorkState,
   type Risk,
   resolveGovernance,
 } from "./governance.js";
 import {
+  appendGovernanceEvidence,
+  beginGovernanceCommit,
   beginGovernanceMutation,
+  clearGovernanceCommit,
   clearGovernanceMutation,
+  completeGovernanceCommit,
   completeGovernanceMutation,
   governanceMutationBlockReason,
   initializeGovernanceState,
@@ -46,10 +61,21 @@ interface PendingMutation {
   workId: string;
   pendingId: string;
   summary: string;
+  before: RepositorySnapshot;
+}
+
+interface PendingCommit {
+  requestKey: string;
+  workId: string;
+  pendingId: string;
+  before: RepositorySnapshot;
+  expectedTree: string;
+  verifiedSnapshotDigest: string;
 }
 
 export interface GedWorkRuntimeOptions {
   createRequestId?: () => string;
+  captureSnapshot?: (cwd: string) => Promise<RepositorySnapshot>;
 }
 
 interface GedWorkToolDetails {
@@ -88,6 +114,14 @@ interface OpenGovernanceParams {
   executionProfile?: ExecutionProfile;
 }
 
+interface VerificationCheckParams {
+  command: string;
+  args: string[];
+}
+
+const execFileAsync = promisify(execFile);
+const MAX_EVIDENCE_OUTPUT = 8_000;
+
 function workTransitionPrompt(pointer: ActiveWorkPointer): string {
   const priorWork =
     pointer.operation === "bootstrap"
@@ -99,7 +133,7 @@ ${priorWork}
 
 Before repository mutation, call ged_work in a separate tool batch. Open new work with a concise summary plus structured ambiguity, risk, minimum mode, and direct-change evidence. Continue only the exact work ID when the user is continuing that task.
 
-Read-only work needs no selection and must not mutate. Planned-change work may write bound .ged planning artifacts before acceptance; source mutation requires ged_governance accept-plan. After checks pass, record-verification before committing. Use ged_lifecycle with an exact work ID to pause, resume, complete, abandon, or supersede work; commits never change lifecycle. Run each transition in its own tool batch.`;
+Read-only work needs no selection and must not mutate. Planned-change work may write bound .ged planning artifacts before acceptance; source mutation requires ged_governance accept-plan and unchanged accepted bytes. Stage only observed work-scope paths, then call record-verification with argv-based checks before committing the exact verified snapshot. Use ged_lifecycle with an exact work ID to pause, resume, complete, abandon, or supersede work; commits never change lifecycle. Run each transition in its own tool batch.`;
 }
 
 function bindingBlockReason(): string {
@@ -312,13 +346,161 @@ function requireOpenGovernance(params: OpenGovernanceParams) {
   };
 }
 
+const READ_ONLY_TOOLS = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "view_image",
+  "web_search",
+  "fetch_content",
+  "get_search_content",
+  "gedpi_plan_review",
+]);
+const GOVERNANCE_TOOLS = new Set([
+  "ged_work",
+  "ged_governance",
+  "ged_lifecycle",
+]);
+
+function isAuditedReadOnlyBash(command: string): boolean {
+  const normalized = command.replace(/\\\n/gu, " ").trim();
+  if (
+    !normalized ||
+    /[;&|`<>\n]/u.test(normalized) ||
+    normalized.includes("$(") ||
+    /(?:^|\s)(?:--output(?:=|\s)|-o(?:\s|$))/u.test(normalized)
+  ) {
+    return false;
+  }
+  return /^(?:pwd|ls|rg|grep|cat|head|tail|wc|stat|file)(?:\s|$)/u.test(
+    normalized,
+  );
+}
+
+function latestEvidence(
+  state: GovernanceWorkState,
+  kind: GovernanceEvidence["kind"],
+): GovernanceEvidence | null {
+  for (let index = state.evidence.length - 1; index >= 0; index -= 1) {
+    const entry = state.evidence[index];
+    if (entry?.kind === kind) return entry;
+  }
+  return null;
+}
+
+function observedScopePaths(state: GovernanceWorkState): string[] {
+  const paths = state.evidence.flatMap((entry) =>
+    entry.kind === "implementation" &&
+    entry.binding?.type === "mutation-content"
+      ? entry.binding.changedPaths
+      : entry.kind === "milestone" && entry.binding?.type === "commit-milestone"
+        ? ["@HEAD"]
+        : [],
+  );
+  return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
+}
+
+async function planBindingBlockReason(
+  rootDir: string,
+  state: GovernanceWorkState,
+): Promise<string | null> {
+  if (state.decision.mode !== "planned-change") return null;
+  const plan = latestEvidence(state, "plan");
+  if (plan?.outcome !== "satisfied" || plan.binding?.type !== "plan-content") {
+    return `Ged work ${state.workId} has no content-bound accepted plan.`;
+  }
+  const paths = gedPathsForWorkId(rootDir, state.workId);
+  const current = await fingerprintFileSet(rootDir, [
+    paths.specPath,
+    paths.tasksPath,
+    paths.testsPath,
+  ]);
+  if (
+    current.digest !== plan.binding.digest ||
+    JSON.stringify(current.paths) !== JSON.stringify(plan.binding.paths)
+  ) {
+    return `Ged work ${state.workId} plan bytes changed after acceptance; accept the current plan again.`;
+  }
+  return null;
+}
+
+function verifiedContent(state: GovernanceWorkState) {
+  const verification = latestEvidence(state, "verification");
+  return verification?.outcome === "satisfied" &&
+    verification.binding?.type === "verification-content"
+    ? verification.binding
+    : null;
+}
+
+function commitCommandBlockReason(command: string): string | null {
+  if (/[;&|`<>\n$*?[\]{}\\]/u.test(command)) {
+    return "GedPi commit guard: compound commit commands are not allowed.";
+  }
+  if (
+    /\bgit(?:\s+-[^\s]+)*\s+commit\b[^\n]*(?:\s-[^-\s]*a[^\s]*|\s--all\b)/u.test(
+      command,
+    )
+  ) {
+    return "GedPi commit guard: commit commands may not stage content with -a/--all.";
+  }
+  return null;
+}
+
+function isPotentialGitCommit(command: string): boolean {
+  return (
+    isGitCommitCommand(command) ||
+    /(?:^|[\s/])git(?:\.exe|\.cmd)?[^\n]*\bcommit\b/iu.test(command)
+  );
+}
+
+async function runVerificationCheck(
+  cwd: string,
+  check: VerificationCheckParams,
+) {
+  const startedAt = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(check.command, check.args, {
+      cwd,
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return {
+      command: check.command,
+      args: check.args,
+      exitCode: 0,
+      stdout: String(stdout).slice(-MAX_EVIDENCE_OUTPUT),
+      stderr: String(stderr).slice(-MAX_EVIDENCE_OUTPUT),
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    const failure = error as Error & {
+      code?: string | number;
+      stdout?: string | Buffer;
+      stderr?: string | Buffer;
+    };
+    return {
+      command: check.command,
+      args: check.args,
+      exitCode: typeof failure.code === "number" ? failure.code : 1,
+      stdout: String(failure.stdout ?? "").slice(-MAX_EVIDENCE_OUTPUT),
+      stderr: String(failure.stderr ?? failure.message).slice(
+        -MAX_EVIDENCE_OUTPUT,
+      ),
+      durationMs: Date.now() - startedAt,
+    };
+  }
+}
+
 export function registerGedWorkRuntime(
   api: ExtensionAPI,
   options: GedWorkRuntimeOptions = {},
 ): void {
   const createRequestId = options.createRequestId ?? randomUUID;
+  const captureSnapshot = options.captureSnapshot ?? captureRepositorySnapshot;
   const activeRequests = new Map<string, ActiveRequest>();
   const pendingMutations = new Map<string, PendingMutation>();
+  const pendingCommits = new Map<string, PendingCommit>();
 
   const requestState = (cwd: string, sessionId: string) => {
     const key = activeRequestKey(cwd, sessionId);
@@ -329,6 +511,48 @@ export function registerGedWorkRuntime(
     for (const [toolCallId, pending] of pendingMutations) {
       if (pending.requestKey === requestKey)
         pendingMutations.delete(toolCallId);
+    }
+    for (const [toolCallId, pending] of pendingCommits) {
+      if (pending.requestKey === requestKey) pendingCommits.delete(toolCallId);
+    }
+  };
+
+  const reconcilePendingCommit = async (cwd: string, workId: string) => {
+    const state = await readGovernanceState(cwd, workId);
+    for (const pending of state.pendingCommits ?? []) {
+      const snapshot = await captureSnapshot(cwd);
+      if (snapshot.head === pending.beforeHead) {
+        await clearGovernanceCommit(cwd, workId, pending.id);
+        continue;
+      }
+      if (
+        snapshot.head &&
+        snapshot.headTree === pending.expectedTree &&
+        snapshot.stagedPaths.length === 0 &&
+        snapshot.unstagedDigest === pending.unstagedDigest &&
+        snapshot.untrackedDigest === pending.untrackedDigest &&
+        (state.pendingMutations?.length ?? 0) === 0
+      ) {
+        await completeGovernanceCommit(cwd, workId, pending.id, {
+          id: `milestone-${randomUUID()}`,
+          kind: "milestone",
+          source: "runtime",
+          recordedAt: new Date().toISOString(),
+          summary: `Recovered commit advancement from ${pending.beforeHead ?? "unborn"} to ${snapshot.head}.`,
+          outcome: "observed",
+          binding: {
+            type: "commit-milestone",
+            beforeHead: pending.beforeHead,
+            afterHead: snapshot.head,
+            committedTree: pending.expectedTree,
+            verifiedSnapshotDigest: pending.verifiedSnapshotDigest,
+          },
+        });
+        continue;
+      }
+      throw new Error(
+        `Ged work ${workId} has an unproven commit whose resulting tree does not match verified staged content.`,
+      );
     }
   };
 
@@ -378,42 +602,38 @@ export function registerGedWorkRuntime(
       typeof (event.input as { command?: unknown }).command === "string"
         ? (event.input as { command: string }).command
         : null;
-    const requiresBinding =
-      event.toolName === "write" ||
-      event.toolName === "edit" ||
-      (bashCommand !== null && isGitCommitCommand(bashCommand));
-    if (!requiresBinding) return;
+    if (
+      GOVERNANCE_TOOLS.has(event.toolName) ||
+      READ_ONLY_TOOLS.has(event.toolName) ||
+      (bashCommand !== null && isAuditedReadOnlyBash(bashCommand))
+    ) {
+      return;
+    }
+
     const sessionId = ctx.sessionManager.getSessionId();
     const { key, request: activeRequest } = requestState(ctx.cwd, sessionId);
-    if (
-      !activeRequest ||
-      activeRequest.cwd !== ctx.cwd ||
-      activeRequest.sessionId !== sessionId ||
-      !activeRequest.workId
-    ) {
+    if (!activeRequest?.workId) {
       return { block: true, reason: bindingBlockReason() };
     }
     try {
       if (
         !(await isActiveWorkBoundToRequest(
           ctx.cwd,
-          {
-            sessionId,
-            requestId: activeRequest.requestId,
-          },
+          { sessionId, requestId: activeRequest.requestId },
           activeRequest.workId,
         ))
       ) {
         return { block: true, reason: bindingBlockReason() };
       }
-      const filePath =
-        event.toolName === "write" || event.toolName === "edit"
-          ? String(
-              (event.input as { path?: unknown; filePath?: unknown }).path ??
-                (event.input as { filePath?: unknown }).filePath ??
-                "",
-            )
-          : "";
+      const isFileMutation =
+        event.toolName === "write" || event.toolName === "edit";
+      const filePath = isFileMutation
+        ? String(
+            (event.input as { path?: unknown; filePath?: unknown }).path ??
+              (event.input as { filePath?: unknown }).filePath ??
+              "",
+          )
+        : "";
       const gedPathKind = filePath
         ? await classifyGedPath(ctx.cwd, filePath, activeRequest.workId)
         : null;
@@ -424,24 +644,18 @@ export function registerGedWorkRuntime(
             "GedPi governance guard: runtime state, active pointers, migration records, and work metadata are runtime-owned.",
         };
       }
-      const action =
-        bashCommand !== null
-          ? "commit"
-          : gedPathKind === "metadata"
-            ? "metadata-mutation"
-            : "source-mutation";
-      if (
-        action === "commit" &&
-        [...pendingMutations.values()].some(
-          (pending) =>
-            pending.requestKey === key &&
-            pending.workId === activeRequest.workId,
-        )
-      ) {
+      const isCommit =
+        bashCommand !== null && isPotentialGitCommit(bashCommand);
+      const action = isCommit
+        ? "commit"
+        : gedPathKind === "metadata"
+          ? "metadata-mutation"
+          : "source-mutation";
+      const state = await readGovernanceState(ctx.cwd, activeRequest.workId);
+      if (!state.contentBaseline) {
         return {
           block: true,
-          reason:
-            "GedPi governance guard: a source mutation is still pending durable implementation evidence.",
+          reason: `GedPi work guard: Ged work ${activeRequest.workId} predates content-bound governance. Open new work before mutation.`,
         };
       }
       const governanceReason = await governanceMutationBlockReason(
@@ -452,44 +666,125 @@ export function registerGedWorkRuntime(
       if (governanceReason) {
         return { block: true, reason: `GedPi work guard: ${governanceReason}` };
       }
-      if (action === "source-mutation") {
-        const lookupKey = pendingMutationKey(
-          key,
-          activeRequest.requestId,
-          event.toolCallId,
-        );
-        if (pendingMutations.has(lookupKey)) {
+      if (action !== "metadata-mutation") {
+        const planReason = await planBindingBlockReason(ctx.cwd, state);
+        if (planReason) {
+          return { block: true, reason: `GedPi work guard: ${planReason}` };
+        }
+      }
+
+      const lookupKey = pendingMutationKey(
+        key,
+        activeRequest.requestId,
+        event.toolCallId,
+      );
+      if (isCommit) {
+        const commandReason = commitCommandBlockReason(bashCommand);
+        if (commandReason) return { block: true, reason: commandReason };
+        const verification = verifiedContent(state);
+        if (!verification) {
           return {
             block: true,
             reason:
-              "GedPi governance guard: this tool call ID already has a pending mutation.",
+              "GedPi commit guard: latest verification is not content-bound.",
           };
         }
-        const pendingId = `mutation-${randomUUID()}`;
-        await beginGovernanceMutation(ctx.cwd, activeRequest.workId, {
+        const current = await captureSnapshot(ctx.cwd);
+        if (!snapshotsEqual(current, verification.snapshot)) {
+          return {
+            block: true,
+            reason:
+              "GedPi commit guard: repository content differs from the verified snapshot.",
+          };
+        }
+        const scope = new Set(verification.scopePaths);
+        const unrelated = current.stagedPaths.filter(
+          (entry) => !scope.has(entry),
+        );
+        if (unrelated.length > 0) {
+          return {
+            block: true,
+            reason: `GedPi commit guard: unrelated staged paths are outside work scope: ${unrelated.join(", ")}`,
+          };
+        }
+        if (
+          current.stagedPaths.length === 0 &&
+          !/\bgit(?:\s+-[^\s]+)*\s+commit\b[^\n]*\s--amend\b/u.test(bashCommand)
+        ) {
+          return {
+            block: true,
+            reason: "GedPi commit guard: no verified work paths are staged.",
+          };
+        }
+        if (!current.indexTree) {
+          return {
+            block: true,
+            reason:
+              "GedPi commit guard: unable to derive the verified index tree.",
+          };
+        }
+        const pendingId = `commit-${randomUUID()}`;
+        await beginGovernanceCommit(ctx.cwd, activeRequest.workId, {
           id: pendingId,
           requestId: activeRequest.requestId,
           toolCallId: event.toolCallId,
-          target: filePath || "repository content",
+          beforeHead: current.head,
+          expectedTree: current.indexTree,
+          unstagedDigest: current.unstagedDigest,
+          untrackedDigest: current.untrackedDigest,
+          verifiedSnapshotDigest: verification.snapshot.digest,
           startedAt: new Date().toISOString(),
         });
-        pendingMutations.set(lookupKey, {
+        pendingCommits.set(lookupKey, {
           requestKey: key,
           workId: activeRequest.workId,
           pendingId,
-          summary: `${event.toolName} ${filePath || "repository content"}`,
+          before: current,
+          expectedTree: current.indexTree,
+          verifiedSnapshotDigest: verification.snapshot.digest,
         });
+        return;
       }
+
+      if (pendingMutations.has(lookupKey)) {
+        return {
+          block: true,
+          reason:
+            "GedPi governance guard: this tool call ID already has a pending mutation.",
+        };
+      }
+      const before = await captureSnapshot(ctx.cwd);
+      const pendingId = `mutation-${randomUUID()}`;
+      await beginGovernanceMutation(
+        ctx.cwd,
+        activeRequest.workId,
+        {
+          id: pendingId,
+          requestId: activeRequest.requestId,
+          toolCallId: event.toolCallId,
+          target: filePath || `${event.toolName} repository capability`,
+          startedAt: new Date().toISOString(),
+        },
+        action === "metadata-mutation"
+          ? "metadata-mutation"
+          : "source-mutation",
+      );
+      pendingMutations.set(lookupKey, {
+        requestKey: key,
+        workId: activeRequest.workId,
+        pendingId,
+        summary: `${event.toolName} ${filePath || "repository capability"}`,
+        before,
+      });
     } catch (error) {
       return {
         block: true,
-        reason: `${bindingBlockReason()} Pointer error: ${error instanceof Error ? error.message : String(error)}`,
+        reason: `GedPi governance guard failed closed: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   });
 
   api.on("tool_result", async (event, ctx) => {
-    if (event.toolName !== "write" && event.toolName !== "edit") return;
     const requestKey = activeRequestKey(
       ctx.cwd,
       ctx.sessionManager.getSessionId(),
@@ -501,16 +796,62 @@ export function registerGedWorkRuntime(
       activeRequest.requestId,
       event.toolCallId,
     );
-    const pending = pendingMutations.get(pendingKey);
-    if (!pending) return;
-    if (event.isError) {
+
+    const commit = pendingCommits.get(pendingKey);
+    if (commit) {
       try {
-        await clearGovernanceMutation(
-          ctx.cwd,
-          pending.workId,
-          pending.pendingId,
-        );
-        pendingMutations.delete(pendingKey);
+        const after = await captureSnapshot(ctx.cwd);
+        const currentState = await readGovernanceState(ctx.cwd, commit.workId);
+        if (
+          after.head &&
+          commit.before.head !== after.head &&
+          after.headTree === commit.expectedTree &&
+          after.stagedPaths.length === 0 &&
+          after.unstagedDigest === commit.before.unstagedDigest &&
+          after.untrackedDigest === commit.before.untrackedDigest &&
+          (currentState.pendingMutations?.length ?? 0) === 0
+        ) {
+          await completeGovernanceCommit(
+            ctx.cwd,
+            commit.workId,
+            commit.pendingId,
+            {
+              id: `milestone-${randomUUID()}`,
+              kind: "milestone",
+              source: "runtime",
+              recordedAt: new Date().toISOString(),
+              summary: `Commit advanced HEAD from ${commit.before.head ?? "unborn"} to ${after.head}.`,
+              outcome: "observed",
+              binding: {
+                type: "commit-milestone",
+                beforeHead: commit.before.head,
+                afterHead: after.head,
+                committedTree: commit.expectedTree,
+                verifiedSnapshotDigest: commit.verifiedSnapshotDigest,
+              },
+            },
+          );
+          pendingCommits.delete(pendingKey);
+          return;
+        }
+        if (after.head === commit.before.head) {
+          await clearGovernanceCommit(ctx.cwd, commit.workId, commit.pendingId);
+          pendingCommits.delete(pendingKey);
+        } else {
+          pendingCommits.delete(pendingKey);
+        }
+        if (!event.isError) {
+          return {
+            content: [
+              ...event.content,
+              {
+                type: "text" as const,
+                text: "GedPi did not record a commit milestone because HEAD did not advance cleanly.",
+              },
+            ],
+            isError: true,
+          };
+        }
         return;
       } catch (error) {
         return {
@@ -518,27 +859,45 @@ export function registerGedWorkRuntime(
             ...event.content,
             {
               type: "text" as const,
-              text: `GedPi could not clear durable pending mutation state: ${error instanceof Error ? error.message : String(error)}`,
+              text: `GedPi commit evidence failed closed: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
         };
       }
     }
+
+    const pending = pendingMutations.get(pendingKey);
+    if (!pending) return;
     try {
-      await completeGovernanceMutation(
-        ctx.cwd,
-        pending.workId,
-        pending.pendingId,
-        {
-          id: `implementation-${randomUUID()}`,
-          kind: "implementation",
-          source: "runtime",
-          recordedAt: new Date().toISOString(),
-          summary: `Successful ${pending.summary}`,
-          outcome: "observed",
-        },
-      );
+      const after = await captureSnapshot(ctx.cwd);
+      if (snapshotsEqual(pending.before, after)) {
+        await clearGovernanceMutation(
+          ctx.cwd,
+          pending.workId,
+          pending.pendingId,
+        );
+      } else {
+        await completeGovernanceMutation(
+          ctx.cwd,
+          pending.workId,
+          pending.pendingId,
+          {
+            id: `implementation-${randomUUID()}`,
+            kind: "implementation",
+            source: "runtime",
+            recordedAt: new Date().toISOString(),
+            summary: `${event.isError ? "Observed changed content after failed" : "Observed changed content after"} ${pending.summary}`,
+            outcome: "observed",
+            binding: {
+              type: "mutation-content",
+              beforeDigest: pending.before.digest,
+              afterDigest: after.digest,
+              changedPaths: changedPathsBetween(pending.before, after),
+            },
+          },
+        );
+      }
       pendingMutations.delete(pendingKey);
     } catch (error) {
       return {
@@ -546,7 +905,7 @@ export function registerGedWorkRuntime(
           ...event.content,
           {
             type: "text" as const,
-            text: `GedPi could not persist implementation evidence: ${error instanceof Error ? error.message : String(error)}`,
+            text: `GedPi could not persist content-bound mutation evidence: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
         isError: true,
@@ -630,13 +989,16 @@ export function registerGedWorkRuntime(
         opened = await openGedWork(ctx.cwd, identity, params.summary ?? "", {
           bindRequest: false,
         });
+        const contentBaseline = await captureSnapshot(ctx.cwd);
         state = await initializeGovernanceState(ctx.cwd, opened.workId, {
           decision: governance.decision,
           executionProfile: governance.executionProfile,
+          contentBaseline,
         });
         opened = await bindGedWork(ctx.cwd, identity, opened.workId, "open");
       } else {
         const workId = params.workId ?? "";
+        await reconcilePendingCommit(ctx.cwd, workId);
         const governanceReason = await governanceMutationBlockReason(
           ctx.cwd,
           workId,
@@ -644,6 +1006,11 @@ export function registerGedWorkRuntime(
         );
         if (governanceReason) throw new Error(governanceReason);
         state = await readGovernanceState(ctx.cwd, workId);
+        if (!state.contentBaseline) {
+          throw new Error(
+            `Ged work ${workId} predates content-bound governance and cannot continue. Open new work.`,
+          );
+        }
         opened = await continueGedWork(ctx.cwd, identity, workId);
       }
       activeRequest.workId = opened.workId;
@@ -670,17 +1037,48 @@ export function registerGedWorkRuntime(
     name: "ged_governance",
     label: "Ged governance",
     description:
-      "Record role-neutral accepted-plan or verification evidence for the exact work bound to this request. Run in its own tool batch.",
+      "Record content-bound accepted-plan evidence or execute and bind verification commands for the exact work in this request. Run in its own tool batch.",
     promptSnippet: "Record accepted governance evidence for current work",
     promptGuidelines: [
       "Use accept-plan only after the coordinator accepts the final planned artifacts.",
-      "Use record-verification only after the planned checks pass and findings are adjudicated.",
+      "For record-verification, provide argv-based checks for the runtime to execute; process or subagent prose alone is never verification.",
       "Evidence producers may be main-agent or optional assistants; staffing never changes the contract.",
     ],
     parameters: Type.Object(
       {
         action: StringEnum(["accept-plan", "record-verification"] as const),
         summary: Type.String({ minLength: 1, maxLength: 500 }),
+        checks: Type.Optional(
+          Type.Array(
+            Type.Object(
+              {
+                command: Type.String({ minLength: 1, maxLength: 200 }),
+                args: Type.Array(Type.String({ maxLength: 1_000 }), {
+                  maxItems: 100,
+                }),
+              },
+              { additionalProperties: false },
+            ),
+            { maxItems: 20 },
+          ),
+        ),
+        residualRisks: Type.Optional(
+          Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
+            maxItems: 20,
+          }),
+        ),
+        review: Type.Optional(
+          Type.Object(
+            {
+              outcome: StringEnum(["clean", "findings"] as const),
+              findings: Type.Array(
+                Type.String({ minLength: 1, maxLength: 1_000 }),
+                { maxItems: 100 },
+              ),
+            },
+            { additionalProperties: false },
+          ),
+        ),
       },
       { additionalProperties: false },
     ),
@@ -704,19 +1102,153 @@ export function registerGedWorkRuntime(
         throw new Error(bindingBlockReason());
       }
       const evidenceId = `${params.action}-${randomUUID()}`;
-      const state = await recordSatisfiedGovernanceEvidence(
-        ctx.cwd,
-        activeRequest.workId,
-        {
-          id: evidenceId,
-          kind: params.action === "accept-plan" ? "plan" : "verification",
-          source: "agent",
-          producerId: "coordinator",
-          recordedAt: new Date().toISOString(),
-          summary: params.summary,
-          outcome: "satisfied",
-        },
-      );
+      let state: GovernanceWorkState;
+      if (params.action === "accept-plan") {
+        const paths = gedPathsForWorkId(ctx.cwd, activeRequest.workId);
+        const binding = await fingerprintFileSet(ctx.cwd, [
+          paths.specPath,
+          paths.tasksPath,
+          paths.testsPath,
+        ]);
+        state = await recordSatisfiedGovernanceEvidence(
+          ctx.cwd,
+          activeRequest.workId,
+          {
+            id: evidenceId,
+            kind: "plan",
+            source: "agent",
+            producerId: "coordinator",
+            recordedAt: new Date().toISOString(),
+            summary: params.summary,
+            outcome: "satisfied",
+            binding: { type: "plan-content", ...binding },
+          },
+        );
+      } else {
+        const checks = params.checks ?? [];
+        if (checks.length === 0) {
+          throw new Error(
+            "record-verification requires at least one argv-based check.",
+          );
+        }
+        let current = await readGovernanceState(ctx.cwd, activeRequest.workId);
+        const planReason = await planBindingBlockReason(ctx.cwd, current);
+        if (planReason) throw new Error(planReason);
+        const before = await captureSnapshot(ctx.cwd);
+        const pendingId = `verification-${randomUUID()}`;
+        await beginGovernanceMutation(
+          ctx.cwd,
+          activeRequest.workId,
+          {
+            id: pendingId,
+            requestId: activeRequest.requestId,
+            toolCallId: _toolCallId,
+            target: "runtime verification commands",
+            startedAt: new Date().toISOString(),
+          },
+          "source-mutation",
+        );
+        const commandResults = [];
+        for (const check of checks) {
+          commandResults.push(await runVerificationCheck(ctx.cwd, check));
+        }
+        const snapshot = await captureSnapshot(ctx.cwd);
+        if (snapshotsEqual(before, snapshot)) {
+          await clearGovernanceMutation(
+            ctx.cwd,
+            activeRequest.workId,
+            pendingId,
+          );
+        } else {
+          await completeGovernanceMutation(
+            ctx.cwd,
+            activeRequest.workId,
+            pendingId,
+            {
+              id: `implementation-${randomUUID()}`,
+              kind: "implementation",
+              source: "runtime",
+              recordedAt: new Date().toISOString(),
+              summary: "Verification commands changed repository content.",
+              outcome: "observed",
+              binding: {
+                type: "mutation-content",
+                beforeDigest: before.digest,
+                afterDigest: snapshot.digest,
+                changedPaths: changedPathsBetween(before, snapshot),
+              },
+            },
+          );
+        }
+        current = await readGovernanceState(ctx.cwd, activeRequest.workId);
+        const scopePaths = observedScopePaths(current);
+        const baseline = current.contentBaseline;
+        if (!baseline) {
+          throw new Error("Content baseline is missing after verification.");
+        }
+        const unscoped = changedPathsBetween(baseline, snapshot).filter(
+          (entry) => !scopePaths.includes(entry),
+        );
+        const failed = commandResults.some((entry) => entry.exitCode !== 0);
+        const reviewBlocked =
+          params.review?.outcome === "findings" ||
+          (params.review?.findings.length ?? 0) > 0;
+        const binding = {
+          type: "verification-content" as const,
+          snapshot,
+          scopePaths,
+          commands: commandResults,
+          environment: {
+            node: process.version,
+            platform: process.platform,
+            arch: process.arch,
+          },
+          ...(params.review ? { review: params.review } : {}),
+          residualRisks: params.residualRisks ?? [],
+        };
+        if (failed || reviewBlocked || unscoped.length > 0) {
+          await appendGovernanceEvidence(ctx.cwd, activeRequest.workId, {
+            id: evidenceId,
+            kind: "verification",
+            source: "runtime",
+            producerId: "coordinator",
+            recordedAt: new Date().toISOString(),
+            summary: failed
+              ? "One or more verification commands failed."
+              : reviewBlocked
+                ? "Independent review reported unresolved findings."
+                : `Verification found unscoped changed paths: ${unscoped.join(", ")}`,
+            outcome: "failed",
+            binding,
+          });
+          throw new Error(
+            failed
+              ? "Verification commands failed; evidence is non-authorizing."
+              : reviewBlocked
+                ? "Independent review findings are non-authorizing."
+                : `Verification found unscoped changed paths: ${unscoped.join(", ")}`,
+          );
+        }
+        const refreshedPlanReason = await planBindingBlockReason(
+          ctx.cwd,
+          current,
+        );
+        if (refreshedPlanReason) throw new Error(refreshedPlanReason);
+        state = await recordSatisfiedGovernanceEvidence(
+          ctx.cwd,
+          activeRequest.workId,
+          {
+            id: evidenceId,
+            kind: "verification",
+            source: "runtime",
+            producerId: "coordinator",
+            recordedAt: new Date().toISOString(),
+            summary: params.summary,
+            outcome: "satisfied",
+            binding,
+          },
+        );
+      }
       const details: GedGovernanceToolDetails = {
         action: params.action,
         workId: activeRequest.workId,
@@ -769,6 +1301,7 @@ export function registerGedWorkRuntime(
           "ged_lifecycle can only run inside the current agent request.",
         );
       }
+      await reconcilePendingCommit(ctx.cwd, params.workId);
       const before = await readGovernanceState(ctx.cwd, params.workId);
       if (before.lifecycle === "active") {
         if (
@@ -790,6 +1323,23 @@ export function registerGedWorkRuntime(
         throw new Error(
           `This request is already bound to different Ged work ${activeRequest.workId}.`,
         );
+      }
+      if (params.action === "complete") {
+        const planReason = await planBindingBlockReason(ctx.cwd, before);
+        if (planReason) throw new Error(planReason);
+        const verification = verifiedContent(before);
+        if (!verification) {
+          throw new Error(
+            `Ged work ${params.workId} cannot complete without content-bound verification.`,
+          );
+        }
+        if (
+          !snapshotsEqual(await captureSnapshot(ctx.cwd), verification.snapshot)
+        ) {
+          throw new Error(
+            `Ged work ${params.workId} cannot complete because repository content differs from verification.`,
+          );
+        }
       }
       const state = await transitionGovernanceLifecycle(
         ctx.cwd,
