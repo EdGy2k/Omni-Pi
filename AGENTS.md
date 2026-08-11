@@ -45,7 +45,7 @@ Pi-runtime-local state and should stay out of Git.
 - `pi-intercom` — optional communication between independent Pi sessions; it is not the authority path for spawned-child decisions
 - `pi-diff-review` — diff review surface
 - `pi-prompt-template-model` — prompt template / model wiring
-- `@plannotator/pi-extension` — visual plan/code review UI used by the `plannotator` draft-plan review preference
+- `@plannotator/pi-extension` — visual plan/code review UI used by the `plannotator` planned-work preference; successful review is bound to exact current plan bytes before acceptance
 - `agent-settings.ts` — preferences persistence in `~/.gedoc/settings.json`
 - GedPi uses Pi's native input, footer, working indicator, command palette, user-message, tool, and read rendering; keep custom UI overrides out unless intentionally reintroduced.
 
@@ -70,9 +70,12 @@ When changing Ged's workflow, update the durable documentation and generated pro
 Ask one concise question only when a user-owned decision remains unresolved;
 otherwise summarize naturally. Read-only work does not open mutating work.
 Mutating work calls `ged_work open` with structured governance evidence.
-Planned-change work writes bounded SPEC/TASKS/TESTS artifacts and records
-accepted-plan evidence with `ged_governance` before source mutation.
-Direct-change work skips plan ceremony. After checks and finding adjudication,
+Planned-change work writes bounded SPEC/TASKS/TESTS artifacts, completes the
+configured review (with exact-byte Plannotator approval when selected), and
+records accepted-plan evidence with `ged_governance` before source mutation.
+Direct-change work skips plan ceremony. Codex uses Pi-native tools; do not add
+`exec_command`/`apply_patch` aliases or a compatibility extension. After checks
+and finding adjudication,
 stage only observed work-scope paths, then let `ged_governance` execute checks
 and bind verification to the exact snapshot before commit. Optional assistants can
 inspect, draft, critique, implement isolated slices, or verify, but the main

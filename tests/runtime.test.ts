@@ -15,31 +15,28 @@ async function createTempProject(prefix: string): Promise<string> {
 }
 
 describe("Ged runtime flow", () => {
-  test("bundles Codex conversion adapter with an exact lock", () => {
-    expect(packageJson.dependencies).toMatchObject({
-      "@howaboua/pi-codex-conversion": "2.2.27",
-    });
-    expect(packageJson.pi.extensions).toEqual(
-      expect.arrayContaining([
-        "./node_modules/@howaboua/pi-codex-conversion/src/index.ts",
-      ]),
+  test("uses Pi-native tools without the Codex conversion adapter", () => {
+    expect(packageJson.dependencies).not.toHaveProperty(
+      "@howaboua/pi-codex-conversion",
+    );
+    expect(packageJson.pi.extensions).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("pi-codex-conversion")]),
     );
 
-    const rootPackage = packageLock.packages[""];
-    expect(rootPackage?.dependencies).toMatchObject({
-      "@howaboua/pi-codex-conversion": "2.2.27",
-    });
-
-    const codexPackage =
-      packageLock.packages["node_modules/@howaboua/pi-codex-conversion"];
-    expect(codexPackage).toMatchObject({
-      version: "2.2.27",
-      resolved: expect.stringContaining(
-        "@howaboua/pi-codex-conversion/-/pi-codex-conversion-2.2.27.tgz",
-      ),
-      integrity:
-        "sha512-yCti0DD4lT0PCsAjk1o0IZz8z+HNQ98Use8AFnGVB/M1WO4K4hIEBMpDg4v8uM3lSZUBQWMGWnMzlVvkxA5SrA==",
-    });
+    const lockPackages = packageLock.packages as Record<
+      string,
+      { dependencies?: Record<string, unknown> } | undefined
+    >;
+    const rootPackage = lockPackages[""];
+    expect(rootPackage?.dependencies).not.toHaveProperty(
+      "@howaboua/pi-codex-conversion",
+    );
+    expect(
+      lockPackages["node_modules/@howaboua/pi-codex-conversion"],
+    ).toBeUndefined();
+    expect(JSON.stringify(packageLock)).not.toContain("pi-codex-conversion");
+    expect(JSON.stringify(packageJson)).not.toContain("exec_command");
+    expect(JSON.stringify(packageJson)).not.toContain("apply_patch");
   });
 
   test("bundles current pi-subagents and pi-intercom", () => {

@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
+import {
+  type FileSetFingerprint,
+  fingerprintFileSet,
+} from "./content-fingerprint.js";
 
 const PLANNOTATOR_REQUEST_CHANNEL = "plannotator:request";
 const PLANNOTATOR_REVIEW_RESULT_CHANNEL = "plannotator:review-result";
@@ -81,7 +85,40 @@ interface PlanReviewDependencies {
   startServer: (planContent: string) => Promise<PlanServerResult | null>;
 }
 
-export function registerPlanReviewTool(api: ExtensionAPI): void {
+export interface PlanReviewToolOptions {
+  requestGlimpse?: (planContent: string) => Promise<PlanReviewResult | null>;
+}
+
+export async function fingerprintPlanReviewArtifacts(
+  rootDir: string,
+  filePath: string,
+): Promise<FileSetFingerprint> {
+  const fullPath = resolve(rootDir, filePath);
+  const artifactPaths =
+    basename(fullPath) === "TASKS.md"
+      ? [
+          resolve(dirname(fullPath), "SPEC.md"),
+          fullPath,
+          resolve(dirname(fullPath), "TESTS.md"),
+        ]
+      : [fullPath];
+  return fingerprintFileSet(rootDir, artifactPaths);
+}
+
+function samePlanBinding(
+  left: FileSetFingerprint,
+  right: FileSetFingerprint,
+): boolean {
+  return (
+    left.digest === right.digest &&
+    JSON.stringify(left.paths) === JSON.stringify(right.paths)
+  );
+}
+
+export function registerPlanReviewTool(
+  api: ExtensionAPI,
+  options: PlanReviewToolOptions = {},
+): void {
   api.registerTool({
     name: "gedpi_plan_review",
     label: "Review Plan",
@@ -114,12 +151,14 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
         text: string,
         approved: boolean,
         feedback?: string,
+        details: Record<string, unknown> = {},
       ) => ({
         content: [{ type: "text" as const, text }],
         details: {
           approved,
           feedback,
           glimpseFallback: getLastGlimpseFallbackDiagnostic(),
+          ...details,
         },
       });
 
@@ -145,9 +184,47 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
         );
       }
 
-      const glimpseDecision = await requestGlimpsePlanReview(planContent);
+      let planBinding: FileSetFingerprint;
+      try {
+        planBinding = await fingerprintPlanReviewArtifacts(ctx.cwd, fullPath);
+        if ((await readFile(fullPath, "utf-8")) !== planContent) {
+          return makeResult(
+            "Error: plan bytes changed while the visual review was starting. Review the current plan again.",
+            false,
+          );
+        }
+      } catch (error) {
+        return makeResult(
+          `Error: could not bind the complete plan artifact set: ${error instanceof Error ? error.message : String(error)}`,
+          false,
+        );
+      }
+
+      const currentApprovedBinding =
+        async (): Promise<FileSetFingerprint | null> => {
+          try {
+            const current = await fingerprintPlanReviewArtifacts(
+              ctx.cwd,
+              fullPath,
+            );
+            return samePlanBinding(planBinding, current) ? current : null;
+          } catch {
+            return null;
+          }
+        };
+      const glimpseDecision = await (
+        options.requestGlimpse ?? requestGlimpsePlanReview
+      )(planContent);
       const glimpseFallback = getLastGlimpseFallbackDiagnostic();
       if (glimpseDecision) {
+        if (glimpseDecision.approved && !(await currentApprovedBinding())) {
+          return makeResult(
+            "Plan approval is stale because SPEC.md, TASKS.md, or TESTS.md changed during visual review. Review the current plan again.",
+            false,
+            undefined,
+            { surface: "glimpse", staleReview: true },
+          );
+        }
         return {
           content: [
             {
@@ -166,6 +243,7 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
             feedback: glimpseDecision.feedback,
             surface: "glimpse",
             glimpseFallback: null,
+            ...(glimpseDecision.approved ? { planBinding } : {}),
           },
         };
       }
@@ -174,14 +252,14 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
 
       if (result.status === "unavailable") {
         return makeResult(
-          `Plannotator is unavailable: ${result.error ?? "extension not loaded or no UI support"}. Fall back to chat approval.`,
+          `Plannotator is unavailable: ${result.error ?? "extension not loaded or no UI support"}. Do not accept the plan while visual review is required.`,
           false,
         );
       }
 
       if (result.status === "error") {
         return makeResult(
-          `Plannotator error: ${result.error}. Fall back to chat approval.`,
+          `Plannotator error: ${result.error}. Do not accept the plan while visual review is required.`,
           false,
         );
       }
@@ -189,7 +267,7 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
       const reviewId = result.result?.reviewId;
       if (!reviewId) {
         return makeResult(
-          "Plannotator returned no review ID. Fall back to chat approval.",
+          "Plannotator returned no review ID. Do not accept the plan while visual review is required.",
           false,
         );
       }
@@ -198,12 +276,20 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
 
       if (!decision) {
         return makeResult(
-          "Plannotator review timed out. Fall back to chat approval.",
+          "Plannotator review timed out. Do not accept the plan while visual review is required.",
           false,
         );
       }
 
       if (decision.approved) {
+        if (!(await currentApprovedBinding())) {
+          return makeResult(
+            "Plan approval is stale because SPEC.md, TASKS.md, or TESTS.md changed during visual review. Review the current plan again.",
+            false,
+            undefined,
+            { surface: "browser", staleReview: true },
+          );
+        }
         return {
           content: [
             {
@@ -218,6 +304,7 @@ export function registerPlanReviewTool(api: ExtensionAPI): void {
             feedback: decision.feedback,
             surface: "browser",
             glimpseFallback,
+            planBinding,
           },
         };
       }

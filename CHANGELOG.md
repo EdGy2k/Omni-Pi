@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.20.0 - 2026-08-11
+
 ### Features
 
 - Replaced branch-derived work selection with immutable generated work IDs,
@@ -72,6 +74,9 @@
 
 ### Dependencies
 
+- Removed the obsolete Codex conversion adapter completely; Codex now uses
+  Pi-native `read`, `bash`, `write`, and `edit` tools without compatibility
+  aliases or an extra extension.
 - Updated the aligned Pi runtime (including agent-core) and compatibility aliases to 0.84.1,
   `pi-subagents` to 0.45.1, and `pi-intercom` to 0.10.0. GedPi now uses the
   public pi-subagents extension entrypoint and current `workflowScript` contract,
@@ -84,6 +89,16 @@
 
 ### Fixes
 
+- Expanded audited read-only Bash handling with bounded `pwd`, `uname`, and Git
+  status/revision/diff/log/show/current-branch inspection while continuing to
+  reject shell composition, output/helper flags, mutating Git, npm scripts, and
+  ambiguous commands. Unknown mutation-capable tools remain snapshot-observed.
+- Bound successful Plannotator approval to the exact current
+  SPEC/TASKS/TESTS bytes through Pi-native structured tool results. Planned
+  acceptance now fails closed when visual approval is missing or stale.
+- Removed stale `pi.skills` paths for dependencies that do not publish skill
+  directories, restoring fresh packed-package resource loading while retaining
+  their configured extensions.
 - Added Pi's `max` thinking level to subagent model configuration, fallback
   suffix parsing, status output, and interactive/headless commands.
 - Removed the unsupported `acceptance.maxFinalizationTurns` guidance, declared
@@ -100,9 +115,9 @@
 
 ### Dependencies
 
-- Updated the Pi runtime stack and compatibility aliases to 0.82.1, plus compatible bundled companions (`@howaboua/pi-codex-conversion` 2.2.27, `@plannotator/pi-extension` 0.25.0, `pi-subagents` 0.37.2, and `pi-web-access` 0.15.0). Pi 0.82 adds constrained tool sampling, session-aware bash integrations, and updated model/provider support without requiring GedPi API changes.
+- Updated the Pi runtime stack and compatibility aliases to 0.82.1, plus compatible bundled companions (the legacy Codex conversion adapter 2.2.27, `@plannotator/pi-extension` 0.25.0, `pi-subagents` 0.37.2, and `pi-web-access` 0.15.0). Pi 0.82 adds constrained tool sampling, session-aware bash integrations, and updated model/provider support without requiring GedPi API changes.
 - Bumped GedPi's direct Pi runtime dependencies and compatibility aliases from 0.80.6 to 0.81.1 after reviewing pi.dev release notes for the 0.80.8 model-runtime compatibility changes.
-- Bumped GedPi's Pi runtime stack to 0.80.6, updated compatibility aliases, and refreshed bundled workflow extensions (`@plannotator/pi-extension` 0.23.0, `pi-subagents` 0.34.0, `pi-web-access` 0.13.0, `pi-prompt-template-model` 0.10.0, and `@howaboua/pi-codex-conversion` 2.1.6) after checking release/package metadata for compatibility-sensitive changes.
+- Bumped GedPi's Pi runtime stack to 0.80.6, updated compatibility aliases, and refreshed bundled workflow extensions (`@plannotator/pi-extension` 0.23.0, `pi-subagents` 0.34.0, `pi-web-access` 0.13.0, `pi-prompt-template-model` 0.10.0, and the legacy Codex conversion adapter 2.1.6) after checking release/package metadata for compatibility-sensitive changes.
 - Updated GedPi developer tooling (`@biomejs/biome` 2.5.3, `@types/node` 25.9.5, `vitest` 4.1.10) and refreshed transitive locks, including a patch-level `vite` override bump to 7.3.6 to clear high-severity audit findings.
 - Refreshed the vendored `pi-diff-review` development lockfile with current TypeScript/native-preview tooling and peer auto-installs while keeping host-provided peer dependencies out of the published GedPi manifest.
 
@@ -115,11 +130,11 @@
 
 ### Dependencies
 
-- Bumped GedPi's Pi runtime dependencies and compatibility aliases to 0.79.4, `@plannotator/pi-extension` to 0.20.2, and `@howaboua/pi-codex-conversion` to 2.0.1 after compatibility review of Pi 0.79 and the Codex adapter PATH-tool rewrite.
+- Bumped GedPi's Pi runtime dependencies and compatibility aliases to 0.79.4, `@plannotator/pi-extension` to 0.20.2, and the legacy Codex conversion adapter to 2.0.1 after compatibility review of Pi 0.79 and the Codex adapter PATH-tool rewrite.
 - Remediated high-severity npm audit findings by updating `vitest` to 4.1.9 and forcing `esbuild` to 0.28.1 across transitive dependency paths.
 - Bumped GedPi's Pi runtime dependencies and compatibility aliases from 0.77.0 to 0.78.1 after reviewing the Pi 0.78.0 and 0.78.1 release notes.
 - Bumped `pi-subagents` from 0.25.0 to 0.28.0 and updated GedPi's worker handoff guidance to prefer structured acceptance contracts for delegated implementation slices.
-- Bumped `@howaboua/pi-codex-conversion` from 1.5.13 to 1.5.21 for the latest Codex adapter fixes and Pi 0.77/0.78 compatibility improvements.
+- Bumped the legacy Codex conversion adapter from 1.5.13 to 1.5.21 for the latest adapter fixes and Pi 0.77/0.78 compatibility improvements.
 - Bumped `@plannotator/pi-extension` from 0.19.18 to 0.19.27 for the latest plan-review integration fixes.
 - Updated dev tooling dependencies: `@biomejs/biome` to 2.4.16, `@types/node` to 25.9.1, and `vitest` to 4.1.8.
 - Bumped GedPi's Pi runtime dependencies and compatibility aliases from 0.75.4 to 0.76.0 after checking the Pi 0.76.0 release notes for breaking changes.
@@ -150,7 +165,7 @@
 ### Dependencies
 
 - Replaced the legacy `@tintinweb/pi-subagents` dependency with pinned `pi-subagents` 0.25.0 and `pi-intercom` 0.6.0, including compatibility aliases for the older `@mariozechner/*` peer names used by `pi-intercom`.
-- Bundled and enabled the pinned `@howaboua/pi-codex-conversion` 1.5.13 extension by default so OpenAI/Codex models get the Codex-oriented tool and prompt adapter.
+- Bundled and enabled the pinned legacy Codex conversion adapter 1.5.13 by default so OpenAI/Codex models received its tool and prompt adapter.
 - Removed unused direct `@anthropic-ai/claude-agent-sdk` and `zod` dependencies from GedPi.
 - Removed the `amp-themes` dependency and its bundled `pi-tool-display` path by localizing the shipped Amp-style themes and user-message styling.
 - Bumped GedPi's Pi runtime from `@earendil-works/pi-coding-agent` 0.75.3 to 0.75.4 and regenerated the package lock to clear the remaining production audit vulnerabilities.

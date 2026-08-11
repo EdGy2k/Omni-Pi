@@ -6,9 +6,11 @@ import { promisify } from "node:util";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readGedPreferences } from "./agent-settings.js";
 import {
   captureRepositorySnapshot,
   changedPathsBetween,
+  type FileSetFingerprint,
   fingerprintFileSet,
   type RepositorySnapshot,
   snapshotsEqual,
@@ -99,6 +101,7 @@ interface ActiveWriterRun extends PendingWriterLaunch {
 export interface GedWorkRuntimeOptions {
   createRequestId?: () => string;
   captureSnapshot?: (cwd: string) => Promise<RepositorySnapshot>;
+  readPlanReviewPreference?: () => Promise<"off" | "chat" | "plannotator">;
 }
 
 interface GedWorkToolDetails {
@@ -375,19 +378,176 @@ const GOVERNANCE_TOOLS = new Set([
   "ged_lifecycle",
 ]);
 
-function isAuditedReadOnlyBash(command: string): boolean {
-  const normalized = command.replace(/\\\n/gu, " ").trim();
+const SIMPLE_READ_ONLY_COMMANDS = new Set([
+  "cat",
+  "grep",
+  "head",
+  "ls",
+  "stat",
+  "tail",
+  "wc",
+]);
+const SAFE_UNAME_LONG_OPTIONS = new Set([
+  "--all",
+  "--hardware-platform",
+  "--help",
+  "--kernel-name",
+  "--kernel-release",
+  "--kernel-version",
+  "--machine",
+  "--nodename",
+  "--operating-system",
+  "--processor",
+  "--version",
+]);
+const GIT_READ_ONLY_SUBCOMMANDS = new Set([
+  "diff",
+  "log",
+  "rev-parse",
+  "show",
+  "status",
+]);
+
+function hasUnsafeShellSyntax(command: string): boolean {
+  return (
+    command.length > 8_192 ||
+    command.includes("\0") ||
+    /[\r\n;&|`<>"'\\$*?[\]{}()!#~]/u.test(command)
+  );
+}
+
+function hasGitOutputOrHelperFlag(args: string[]): boolean {
+  return args.some(
+    (arg) =>
+      arg === "--ext-diff" ||
+      arg.startsWith("--ext-diff=") ||
+      arg === "--textconv" ||
+      arg.startsWith("--textconv=") ||
+      arg === "--output" ||
+      arg.startsWith("--output=") ||
+      /^-o.+$/u.test(arg) ||
+      arg === "-o",
+  );
+}
+
+/**
+ * Recognize only shell-free inspection commands whose executable and Git
+ * subcommand are known to be read-only. Everything else remains governed and
+ * pre/post snapshot-observed, including unknown tools and npm scripts.
+ */
+export function isAuditedReadOnlyBash(command: string): boolean {
+  const normalized = command.trim();
+  if (!normalized || hasUnsafeShellSyntax(normalized)) return false;
+  const tokens = normalized.split(/\s+/u);
+  if (tokens.length > 128 || tokens.some((token) => token.length > 4_096)) {
+    return false;
+  }
+
+  const [executable, ...args] = tokens;
+  if (!executable) return false;
+  if (SIMPLE_READ_ONLY_COMMANDS.has(executable)) return true;
+  if (executable === "rg") {
+    return (
+      args.includes("--no-config") &&
+      !args.some((arg) => arg === "--pre" || arg.startsWith("--pre="))
+    );
+  }
+  if (executable === "file") {
+    return !args.some((arg) =>
+      ["-z", "-Z", "--uncompress", "--uncompress-noreport"].includes(arg),
+    );
+  }
+  if (executable === "pwd") {
+    return (
+      args.length <= 1 && args.every((arg) => arg === "-L" || arg === "-P")
+    );
+  }
+  if (executable === "uname") {
+    return args.every(
+      (arg) => /^-[asnrvmpio]+$/u.test(arg) || SAFE_UNAME_LONG_OPTIONS.has(arg),
+    );
+  }
+  if (executable !== "git") return false;
+
+  const [subcommand, ...gitArgs] = args;
+  if (!subcommand) return false;
+  if (subcommand === "branch") {
+    return gitArgs.length === 1 && gitArgs[0] === "--show-current";
+  }
+  if (!GIT_READ_ONLY_SUBCOMMANDS.has(subcommand)) return false;
   if (
-    !normalized ||
-    /[;&|`<>\n]/u.test(normalized) ||
-    normalized.includes("$(") ||
-    /(?:^|\s)(?:--output(?:=|\s)|-o(?:\s|$))/u.test(normalized)
+    (subcommand === "diff" || subcommand === "log" || subcommand === "show") &&
+    hasGitOutputOrHelperFlag(gitArgs)
   ) {
     return false;
   }
-  return /^(?:pwd|ls|rg|grep|cat|head|tail|wc|stat|file)(?:\s|$)/u.test(
-    normalized,
-  );
+  return true;
+}
+
+interface ReviewedPlanDetails extends FileSetFingerprint {
+  approved: true;
+}
+
+function latestApprovedPlanReview(
+  sessionManager: unknown,
+): ReviewedPlanDetails | null {
+  if (!sessionManager || typeof sessionManager !== "object") return null;
+  const getBranch = (sessionManager as { getBranch?: unknown }).getBranch;
+  if (typeof getBranch !== "function") return null;
+  const entries = getBranch.call(sessionManager) as unknown;
+  if (!Array.isArray(entries)) return null;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || typeof entry !== "object") continue;
+    const message = (entry as { type?: unknown; message?: unknown }).message;
+    if (!message || typeof message !== "object") continue;
+    const toolResult = message as {
+      role?: unknown;
+      toolName?: unknown;
+      details?: unknown;
+    };
+    if (
+      toolResult.role !== "toolResult" ||
+      toolResult.toolName !== "gedpi_plan_review"
+    ) {
+      continue;
+    }
+    if (!toolResult.details || typeof toolResult.details !== "object") {
+      return null;
+    }
+    const details = toolResult.details as {
+      approved?: unknown;
+      planBinding?: unknown;
+    };
+    if (
+      details.approved !== true ||
+      !details.planBinding ||
+      typeof details.planBinding !== "object"
+    ) {
+      return null;
+    }
+    const binding = details.planBinding as {
+      digest?: unknown;
+      paths?: unknown;
+    };
+    if (
+      typeof binding.digest !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(binding.digest) ||
+      !Array.isArray(binding.paths) ||
+      !binding.paths.every(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
+    ) {
+      return null;
+    }
+    return {
+      approved: true,
+      digest: binding.digest,
+      paths: [...binding.paths],
+    };
+  }
+  return null;
 }
 
 function latestEvidence(
@@ -459,10 +619,12 @@ function commitCommandBlockReason(command: string): string | null {
   return null;
 }
 
-function isPotentialGitCommit(command: string): boolean {
+export function isPotentialGitCommit(command: string): boolean {
   return (
     isGitCommitCommand(command) ||
-    /(?:^|[\s/])git(?:\.exe|\.cmd)?[^\n]*\bcommit\b/iu.test(command)
+    /(?:^|\s)(?:\/[^\s]+\/)?git(?:\.exe|\.cmd)?(?:\s+-[^\s]+)*\s+commit(?:\s|$)/iu.test(
+      command,
+    )
   );
 }
 
@@ -510,6 +672,9 @@ export function registerGedWorkRuntime(
 ): void {
   const createRequestId = options.createRequestId ?? randomUUID;
   const captureSnapshot = options.captureSnapshot ?? captureRepositorySnapshot;
+  const readPlanReviewPreference =
+    options.readPlanReviewPreference ??
+    (async () => (await readGedPreferences()).reviewPlanBeforePlannerHandoff);
   const activeRequests = new Map<string, ActiveRequest>();
   const pendingMutations = new Map<string, PendingMutation>();
   const pendingCommits = new Map<string, PendingCommit>();
@@ -1385,12 +1550,35 @@ export function registerGedWorkRuntime(
       const evidenceId = `${params.action}-${randomUUID()}`;
       let state: GovernanceWorkState;
       if (params.action === "accept-plan") {
+        const current = await readGovernanceState(
+          ctx.cwd,
+          activeRequest.workId,
+        );
         const paths = gedPathsForWorkId(ctx.cwd, activeRequest.workId);
         const binding = await fingerprintFileSet(ctx.cwd, [
           paths.specPath,
           paths.tasksPath,
           paths.testsPath,
         ]);
+        if (
+          current.decision.mode === "planned-change" &&
+          (await readPlanReviewPreference()) === "plannotator"
+        ) {
+          const review = latestApprovedPlanReview(ctx.sessionManager);
+          if (!review) {
+            throw new Error(
+              "Plannotator review is required before accept-plan, but no approved gedpi_plan_review result with an exact plan binding exists in the current session.",
+            );
+          }
+          if (
+            review.digest !== binding.digest ||
+            JSON.stringify(review.paths) !== JSON.stringify(binding.paths)
+          ) {
+            throw new Error(
+              "The approved Plannotator plan bytes do not match the current SPEC/TASKS/TESTS artifacts. Review the current TASKS.md again before accept-plan.",
+            );
+          }
+        }
         state = await recordSatisfiedGovernanceEvidence(
           ctx.cwd,
           activeRequest.workId,

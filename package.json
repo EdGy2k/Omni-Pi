@@ -1,6 +1,6 @@
 {
   "name": "gedpi",
-  "version": "0.19.2",
+  "version": "0.20.0",
   "description": "Single-agent Pi package that clarifies requests, documents the spec, and implements work in bounded slices.",
   "type": "module",
   "license": "MIT",
@@ -51,6 +51,7 @@
     "test": "vitest run --pool=forks --maxWorkers=1",
     "verify": "npm run check && npm run lint && npm test && npm run pack:check",
     "pack:check": "npm pack --dry-run",
+    "pack:install-check": "node ./scripts/verify-packed-install.mjs",
     "prepublishOnly": "npm run verify"
   },
   "devDependencies": {
@@ -67,15 +68,12 @@
       "./node_modules/pi-intercom/index.ts",
       "./vendor/pi-diff-review/src/index.ts",
       "./node_modules/pi-prompt-template-model/index.ts",
-      "./node_modules/@plannotator/pi-extension/index.ts",
-      "./node_modules/@howaboua/pi-codex-conversion/src/index.ts"
+      "./node_modules/@plannotator/pi-extension/index.ts"
     ],
     "skills": [
       "./skills",
       "./node_modules/glimpseui/skills",
-      "./node_modules/pi-web-access/skills",
       "./node_modules/pi-prompt-template-model/skills",
-      "./node_modules/@plannotator/pi-extension/skills",
       "./node_modules/pi-subagents/skills",
       "./node_modules/pi-intercom/skills"
     ],
@@ -91,7 +89,6 @@
     "@earendil-works/pi-ai": "0.84.1",
     "@earendil-works/pi-coding-agent": "0.84.1",
     "@earendil-works/pi-tui": "0.84.1",
-    "@howaboua/pi-codex-conversion": "2.2.27",
     "@mariozechner/pi-coding-agent": "npm:@earendil-works/pi-coding-agent@0.84.1",
     "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.84.1",
     "@plannotator/pi-extension": "0.25.0",

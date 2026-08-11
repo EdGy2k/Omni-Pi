@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
+import { fingerprintFileSet } from "../src/content-fingerprint.js";
 import {
   activeGedPaths,
   activeWorkPointerPath,
@@ -25,13 +26,20 @@ import {
   initializeGovernanceState,
   readGovernanceState,
 } from "../src/governance-store.js";
-import { registerGedWorkRuntime } from "../src/work-runtime.js";
+import {
+  isAuditedReadOnlyBash,
+  isPotentialGitCommit,
+  registerGedWorkRuntime,
+} from "../src/work-runtime.js";
 
 type Handler = (event: Record<string, unknown>, ctx: TestContext) => unknown;
 
 interface TestContext {
   cwd: string;
-  sessionManager: { getSessionId(): string };
+  sessionManager: {
+    getSessionId(): string;
+    getBranch?(): unknown[];
+  };
 }
 
 interface TestTool {
@@ -45,7 +53,10 @@ interface TestTool {
   ): Promise<{ details?: Record<string, unknown> }>;
 }
 
-function runtimeHarness(requestIds: string[]) {
+function runtimeHarness(
+  requestIds: string[],
+  planReviewPreference: "off" | "chat" | "plannotator" = "off",
+) {
   const handlers = new Map<string, Handler[]>();
   const eventHandlers = new Map<string, Array<(payload: unknown) => unknown>>();
   const tools = new Map<string, TestTool>();
@@ -73,6 +84,7 @@ function runtimeHarness(requestIds: string[]) {
       if (!next) throw new Error("Missing test request ID");
       return next;
     },
+    readPlanReviewPreference: async () => planReviewPreference,
   });
 
   return {
@@ -199,7 +211,118 @@ async function successfulWrite(
   );
 }
 
+describe("audited read-only Bash classification", () => {
+  it.each([
+    "pwd",
+    "pwd -P",
+    "uname",
+    "uname -a",
+    "git status",
+    "git status --short --branch",
+    "git rev-parse HEAD",
+    "git rev-parse --show-toplevel",
+    "git diff",
+    "git diff --check",
+    "git diff --cached -- src/work-runtime.ts",
+    "git log -1 --oneline",
+    "git show --stat HEAD",
+    "git branch --show-current",
+    "rg --no-config pattern src",
+  ])("allows bounded inspection: %s", (command) => {
+    expect(isAuditedReadOnlyBash(command)).toBe(true);
+  });
+
+  it.each([
+    "pwd; touch owned",
+    "uname && touch owned",
+    "git status | tee owned",
+    "git status > owned",
+    "git status $(touch owned)",
+    "git status `touch owned`",
+    "git status\\ --short",
+    "git status # ambiguous comment",
+    "git diff --output=owned",
+    "git diff -o owned",
+    "git diff --ext-diff",
+    "git show --textconv HEAD",
+    "git branch",
+    "git branch release",
+    "git checkout main",
+    "git reset --hard",
+    "git commit -m release",
+    "git -c alias.status=!touch status",
+    "npm test",
+    "npm run check",
+    "rg pattern src",
+    "rg --no-config --pre=touch pattern",
+    "file --uncompress archive.gz",
+  ])("rejects mutating or ambiguous shell input: %s", (command) => {
+    expect(isAuditedReadOnlyBash(command)).toBe(false);
+  });
+
+  it("detects the Git commit subcommand without matching filenames", () => {
+    expect(isPotentialGitCommit('git commit -m "release"')).toBe(true);
+    expect(isPotentialGitCommit('/usr/bin/git commit -m "release"')).toBe(true);
+    expect(
+      isPotentialGitCommit(
+        "git add src/commit-settings.ts templates/managed-prompts/commit.md",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("Ged governance runtime", () => {
+  it("permits audited Bash inspection without governed work and blocks ambiguous Bash", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-readonly-bash-"));
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+
+    for (const command of [
+      "pwd",
+      "uname -a",
+      "git status --short",
+      "git rev-parse HEAD",
+      "git diff --check",
+      "git log -1 --oneline",
+      "git show --stat HEAD",
+      "git branch --show-current",
+    ]) {
+      expect(
+        (
+          await runtime.emit(
+            "tool_call",
+            {
+              type: "tool_call",
+              toolCallId: `inspect-${command}`,
+              toolName: "bash",
+              input: { command },
+            },
+            ctx,
+          )
+        )[0],
+      ).toBeUndefined();
+    }
+
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "ambiguous-inspection",
+            toolName: "bash",
+            input: { command: "git status && touch owned" },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("not bound"),
+    });
+  });
   it("blocks unisolated parallel writer workflowScript dispatches", async () => {
     const rootDir = await mkdtemp(
       path.join(os.tmpdir(), "ged-staffing-guard-"),
@@ -803,11 +926,13 @@ describe("Ged governance runtime", () => {
     ).rejects.toThrow("invalid from completed");
   });
 
-  it("allows planned artifacts before acceptance and source writes only after acceptance", async () => {
+  it("runs planned work through exact visual evidence, mutation, verification, and lifecycle", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-work-planned-"));
     await initializeGit(rootDir);
+    const branch: unknown[] = [];
     const ctx = context(rootDir);
-    const runtime = runtimeHarness(["request-a"]);
+    ctx.sessionManager.getBranch = () => branch;
+    const runtime = runtimeHarness(["request-a"], "plannotator");
     await startRequest(runtime, ctx);
     const opened = await runtime.execute("ged_work", plannedOpen(), ctx);
     const workId = opened.details?.workId as string;
@@ -838,6 +963,19 @@ describe("Ged governance runtime", () => {
       reason: expect.stringContaining("without satisfied plan evidence"),
     });
 
+    const reviewed = await fingerprintFileSet(rootDir, [
+      paths.specPath,
+      paths.tasksPath,
+      paths.testsPath,
+    ]);
+    branch.push({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "gedpi_plan_review",
+        details: { approved: true, planBinding: reviewed },
+      },
+    });
     await runtime.execute(
       "ged_governance",
       {
@@ -870,6 +1008,95 @@ describe("Ged governance runtime", () => {
     expect((await readGovernanceState(rootDir, workId)).evidence).toHaveLength(
       4,
     );
+    await runtime.execute(
+      "ged_lifecycle",
+      {
+        action: "complete",
+        workId,
+        reason: "Exact visual plan, mutation, and verification completed",
+      },
+      ctx,
+    );
+    expect(await readGovernanceState(rootDir, workId)).toMatchObject({
+      lifecycle: "completed",
+    });
+  });
+
+  it("requires a current exact-byte Plannotator result before planned acceptance", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-work-plan-review-"),
+    );
+    await initializeGit(rootDir);
+    const branch: unknown[] = [];
+    const ctx = context(rootDir);
+    ctx.sessionManager.getBranch = () => branch;
+    const runtime = runtimeHarness(["request-a"], "plannotator");
+    await startRequest(runtime, ctx);
+    await runtime.execute("ged_work", plannedOpen(), ctx);
+    const paths = await activeGedPaths(rootDir, "session-a");
+    await successfulWrite(runtime, ctx, "plan-spec", paths.specPath);
+    await successfulWrite(runtime, ctx, "plan-tasks", paths.tasksPath);
+    await successfulWrite(runtime, ctx, "plan-tests", paths.testsPath);
+
+    await expect(
+      runtime.execute(
+        "ged_governance",
+        { action: "accept-plan", summary: "No visual review yet" },
+        ctx,
+      ),
+    ).rejects.toThrow("Plannotator review is required");
+
+    const reviewed = await fingerprintFileSet(rootDir, [
+      paths.specPath,
+      paths.tasksPath,
+      paths.testsPath,
+    ]);
+    branch.push({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "gedpi_plan_review",
+        details: { approved: true, planBinding: reviewed },
+      },
+    });
+    await runtime.execute(
+      "ged_governance",
+      { action: "accept-plan", summary: "Exact visual review" },
+      ctx,
+    );
+
+    branch.push({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "gedpi_plan_review",
+        details: { approved: false },
+      },
+    });
+    await expect(
+      runtime.execute(
+        "ged_governance",
+        { action: "accept-plan", summary: "Later visual denial" },
+        ctx,
+      ),
+    ).rejects.toThrow("Plannotator review is required");
+
+    branch.push({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolName: "gedpi_plan_review",
+        details: { approved: true, planBinding: reviewed },
+      },
+    });
+    await writeFile(paths.tasksPath, "changed after visual review\n");
+    await expect(
+      runtime.execute(
+        "ged_governance",
+        { action: "accept-plan", summary: "Stale visual review" },
+        ctx,
+      ),
+    ).rejects.toThrow("approved Plannotator plan bytes do not match");
   });
 
   it("records implementation only after successful write results", async () => {

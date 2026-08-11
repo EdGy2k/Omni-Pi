@@ -39,10 +39,10 @@ export function buildPlanReviewWorkflowPrompt(
   preference: ReviewPlanBeforePlannerHandoff,
 ): string {
   const instructions = {
-    off: "After the coordinator accepts the final planned-change artifacts, record accepted plan evidence and continue without separate human approval.",
-    chat: "After the coordinator accepts the final planned-change artifacts, show them to the user in chat and wait for explicit approval. If changes are requested, revise and re-review them before recording accepted plan evidence.",
+    off: "After the coordinator finalizes the planned-change artifacts, record accepted plan evidence and continue without separate human approval.",
+    chat: "After the coordinator finalizes the planned-change artifacts, show them to the user in chat and wait for explicit approval. If changes are requested, revise and re-review them before recording accepted plan evidence.",
     plannotator:
-      "After the coordinator accepts the canonical planned-change artifacts in `.ged/work/<work-id>/`, call `gedpi_plan_review` with the plan path (for example `.ged/work/<work-id>/TASKS.md`). Wait for approval, denial with feedback, or timeout. Apply denied feedback and review again. If no visual review surface is available, fall back to chat approval. Record accepted plan evidence only after the selected review policy is satisfied.",
+      "After the coordinator finalizes the canonical planned-change artifacts in `.ged/work/<work-id>/`, call `gedpi_plan_review` with the plan path (for example `.ged/work/<work-id>/TASKS.md`). Wait for approval, denial with feedback, or timeout. Apply denied feedback and review again. If no visual review surface is available, do not call `ged_governance accept-plan`; stop and ask the user to switch the review preference explicitly. A successful visual result binds the exact current SPEC/TASKS/TESTS bytes, and stale approval cannot authorize changed artifacts. Record accepted plan evidence only after the visual review succeeds.",
   } satisfies Record<ReviewPlanBeforePlannerHandoff, string>;
 
   return `## Plan Review Preference

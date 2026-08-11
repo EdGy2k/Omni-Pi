@@ -145,19 +145,133 @@ When optional assistants are used, treat their results as untrusted evidence pro
 
 // ─── Git commit detection ───────────────────────────────────────────────
 
+function shellCommandSegments(command: string): string[][] | null {
+  const segments: string[][] = [];
+  let segment: string[] = [];
+  let token = "";
+  let quote: "'" | '"' | null = null;
+  const flushToken = () => {
+    if (token.length > 0) segment.push(token);
+    token = "";
+  };
+  const flushSegment = () => {
+    flushToken();
+    if (segment.length > 0) segments.push(segment);
+    segment = [];
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    if (character === "\\" && quote !== "'") {
+      const next = command[index + 1];
+      if (next === undefined) return null;
+      token += next;
+      index += 1;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = null;
+      else token += character;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (/\s/u.test(character ?? "")) {
+      flushToken();
+      continue;
+    }
+    if (character === ";" || character === "|" || character === "&") {
+      flushSegment();
+      if (command[index + 1] === character) index += 1;
+      continue;
+    }
+    token += character;
+  }
+  if (quote) return null;
+  flushSegment();
+  return segments;
+}
+
+function executableName(token: string): string {
+  return token.split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
+}
+
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--config-env",
+  "--exec-path",
+  "--git-dir",
+  "--namespace",
+  "--super-prefix",
+  "--work-tree",
+]);
+
+function gitSubcommand(tokens: string[], gitIndex: number): string | null {
+  for (let index = gitIndex + 1; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (
+      token.startsWith("-c") ||
+      [...GIT_GLOBAL_OPTIONS_WITH_VALUE].some((option) =>
+        token.startsWith(`${option}=`),
+      )
+    ) {
+      continue;
+    }
+    if (token.startsWith("-")) continue;
+    return token.toLowerCase();
+  }
+  return null;
+}
+
+function unwrapCommand(tokens: string[]): number {
+  let index = 0;
+  if (tokens[index] === "rtk") index += 1;
+  if (tokens[index] === "env") {
+    index += 1;
+    while (
+      index < tokens.length &&
+      (tokens[index]?.startsWith("-") ||
+        /^[A-Za-z_][A-Za-z0-9_]*=/u.test(tokens[index] ?? ""))
+    ) {
+      index += 1;
+    }
+  }
+  if (tokens[index] === "sudo") {
+    index += 1;
+    while (tokens[index]?.startsWith("-")) index += 1;
+  }
+  if (tokens[index] === "command") index += 1;
+  return index;
+}
+
 function containsGitCommitCommand(command: string, depth: number): boolean {
   if (depth > 3) return false;
-  const normalized = command.replace(/\\\n/gu, " ").trim();
-  const stripped = normalized
-    .replace(/^(?:rtk\s+)?(?:env\s+(?:-[^\s]*\s+)*\s*)?(?:sudo\s+)?/u, "")
-    .trim();
-  if (/(?:^|[|&;]\s*)git(?:\.(?:exe|cmd))?\b.*\bcommit\b/u.test(stripped)) {
-    return true;
-  }
-  const shellPattern =
-    /(?:^|[|&;]\s*)(?:rtk\s+)?(?:env\s+(?:-[^\s]*\s+)*\s*)?(?:sudo\s+)?(?:bash|sh|zsh|fish)\s+(?:-[^\s]*\s+)*(?:-[^\s]*c[^\s]*|-c)\s+(["'])(.*?)\1/gu;
-  for (const match of stripped.matchAll(shellPattern)) {
-    if (containsGitCommitCommand(match[2], depth + 1)) return true;
+  const segments = shellCommandSegments(command.replace(/\\\n/gu, " "));
+  if (!segments) return false;
+  for (const tokens of segments) {
+    const executableIndex = unwrapCommand(tokens);
+    const executable = executableName(tokens[executableIndex] ?? "");
+    if (
+      ["git", "git.exe", "git.cmd"].includes(executable) &&
+      gitSubcommand(tokens, executableIndex) === "commit"
+    ) {
+      return true;
+    }
+    if (["bash", "sh", "zsh", "fish"].includes(executable)) {
+      const shellArgs = tokens.slice(executableIndex + 1);
+      const commandIndex = shellArgs.findIndex(
+        (token) => token === "-c" || /^-[A-Za-z]*c[A-Za-z]*$/u.test(token),
+      );
+      const nested = commandIndex >= 0 ? shellArgs[commandIndex + 1] : null;
+      if (nested && containsGitCommitCommand(nested, depth + 1)) return true;
+    }
   }
   return false;
 }

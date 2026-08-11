@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "workId": "fix-native-tool-governance-remove-codex-conversi-20260811225838945-3536596e894aaffaff5e0454715fe15d",
+  "summary": "Fix native-tool governance, remove Codex conversion, prove Plannotator planned flow, and release GedPi 0.20.0 only after all gates pass.",
+  "createdAt": "2026-08-11T22:58:38.945Z",
+  "branch": "main",
+  "baseHead": "43cd16803aa5be4f5f229cbe16c22de5e2e4d8ae"
+}

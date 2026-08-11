@@ -76,9 +76,11 @@ never copied into authorizing fields or selected as current work.
 ### Role-neutral transitions
 
 `ged_governance accept-plan` fingerprints exact SPEC/TASKS/TESTS bytes and
-appends satisfied plan evidence after the
-coordinator accepts the canonical planned artifacts and any configured human
-review is complete. Planned-change source mutation requires the latest plan
+appends satisfied plan evidence after the coordinator finalizes the canonical
+artifacts and any configured human review is complete. With Plannotator
+selected, `gedpi_plan_review` runs first and its structured tool result binds
+the approval to those exact current bytes; missing or stale visual approval
+blocks acceptance. Planned-change source mutation requires the latest plan
 evidence to be satisfied.
 
 `ged_governance record-verification` executes argv-based checks, records bounded

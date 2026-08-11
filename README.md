@@ -78,7 +78,7 @@ Current deferred roadmap items remain intentional and visible in docs rather tha
 | **pi-intercom** | Optional messaging between independent Pi sessions; spawned-child decisions use pi-subagents' native supervisor channel |
 | **pi-diff-review** | Native git diff review window that inserts structured review feedback into the editor |
 | **pi-prompt-template-model** | Prompt templates can set thinking/model behavior and back commands like `/commit` and `/push` |
-| **@plannotator/pi-extension** | Plan/code review UI; GedPi draft-plan approval prefers native Glimpse when available and falls back to Plannotator's browser UI |
+| **@plannotator/pi-extension** | Plan/code review UI; GedPi planned-work approval prefers native Glimpse, falls back to Plannotator's browser UI, and binds approval to the exact current plan artifacts |
 | **~/.gedoc/settings.json** | GedPi workflow preferences (commit behavior, draft-plan review) via `/ged-settings` command |
 | **native Pi UI** | GedPi uses Pi's native input, footer, working indicator, command palette, user-message, tool, and read rendering |
 
@@ -126,9 +126,14 @@ with durable reason and content-hash provenance; neither tool turns Markdown
 into authority.
 
 Planned-change work may write its active `SPEC.md`, `TASKS.md`, and `TESTS.md`
-before acceptance. Source mutation requires role-neutral accepted-plan evidence
-bound to the exact plan bytes. The runtime snapshots known and unknown
-mutation-capable tools, executes declared verification commands, and requires
+before acceptance. With visual review selected, the final artifacts are shown
+through `gedpi_plan_review`; approval is bound to their exact current bytes
+before `ged_governance accept-plan`, so changed or stale plans require another
+review. Source mutation then requires role-neutral accepted-plan evidence bound
+to those exact bytes. Codex and other models use Pi's native `read`, `bash`,
+`write`, and `edit` tools; GedPi does not install compatibility aliases. The
+runtime snapshots known and unknown mutation-capable tools, executes declared
+verification commands, and requires
 the already-staged work scope to exactly match the verified repository snapshot
 before commit. Proven HEAD advances become milestones and do not close work
 automatically. `ged_lifecycle` explicitly
@@ -181,7 +186,10 @@ independent-session target.
 GedPi's runtime guards are an accident-prevention and evidence boundary, not an
 OS sandbox. They currently enforce request binding and authoritative governance
 for known mutation-capable tools, mutating bash, and unknown extension tools;
-audited read-only tools remain available without mutating work. The runtime
+audited, shell-free inspection forms such as `pwd`, `uname`, and bounded Git
+status/revision/diff/log/show/current-branch commands remain available without
+mutating work. Chaining, redirection, substitution, helper/output flags, npm
+scripts, and ambiguous Bash stay governed and snapshot-observed. The runtime
 protects runtime-owned `.ged` paths through resolved symlinks, durably records
 pending operations, binds plans and verification to canonical SHA-256
 snapshots, rejects unrelated staged paths, and records commit milestones only

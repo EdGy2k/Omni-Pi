@@ -90,7 +90,10 @@ describe("commit settings", () => {
       "visual review surface",
     );
     expect(buildPlanReviewWorkflowPrompt("plannotator")).toContain(
-      "fall back to chat approval",
+      "do not call `ged_governance accept-plan`",
+    );
+    expect(buildPlanReviewWorkflowPrompt("plannotator")).toContain(
+      "exact current SPEC/TASKS/TESTS bytes",
     );
     expect(buildPlanReviewWorkflowPrompt("plannotator")).toContain(
       "accepted plan evidence",

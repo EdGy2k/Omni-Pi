@@ -120,12 +120,20 @@ describe("package Pi configuration", () => {
     }
   });
 
-  test("Plannotator extension and skills are bundled by default", async () => {
+  test("keeps Plannotator and excludes the Codex conversion package", async () => {
     const packageJson = JSON.parse(
       await readFile(path.join(process.cwd(), "package.json"), "utf8"),
     ) as {
       pi?: { extensions?: string[]; skills?: string[] };
       dependencies?: Record<string, unknown>;
+    };
+    const lock = JSON.parse(
+      await readFile(path.join(process.cwd(), "package-lock.json"), "utf8"),
+    ) as {
+      packages?: Record<
+        string,
+        { dependencies?: Record<string, unknown> } | undefined
+      >;
     };
 
     expect(packageJson.dependencies).toHaveProperty(
@@ -134,8 +142,23 @@ describe("package Pi configuration", () => {
     expect(packageJson.pi?.extensions ?? []).toContain(
       "./node_modules/@plannotator/pi-extension/index.ts",
     );
-    expect(packageJson.pi?.skills ?? []).toContain(
+    expect(packageJson.pi?.skills ?? []).not.toContain(
       "./node_modules/@plannotator/pi-extension/skills",
     );
+    expect(packageJson.pi?.skills ?? []).not.toContain(
+      "./node_modules/pi-web-access/skills",
+    );
+    expect(packageJson.dependencies).not.toHaveProperty(
+      "@howaboua/pi-codex-conversion",
+    );
+    expect(packageJson.pi?.extensions ?? []).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("pi-codex-conversion")]),
+    );
+    expect(lock.packages?.[""]?.dependencies).not.toHaveProperty(
+      "@howaboua/pi-codex-conversion",
+    );
+    expect(
+      lock.packages?.["node_modules/@howaboua/pi-codex-conversion"],
+    ).toBeUndefined();
   });
 });

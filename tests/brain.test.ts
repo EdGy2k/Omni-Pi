@@ -12,6 +12,7 @@ import {
   renderPromptContentBlock,
   TRUNK_BRANCHES,
 } from "../src/brain.js";
+import { fingerprintFileSet } from "../src/content-fingerprint.js";
 import {
   createPlannedWorkArtifacts,
   createProjectSummary,
@@ -111,9 +112,13 @@ describe("Ged brain runtime", () => {
       "Current setting: Review with Plannotator (plannotator)",
     );
     expect(prompt).toContain("gedpi_plan_review");
-    expect(prompt).toContain("fall back to chat approval");
+    expect(prompt).toContain("do not call `ged_governance accept-plan`");
+    expect(prompt).toContain("exact current SPEC/TASKS/TESTS bytes");
     expect(prompt).toContain(
-      "ged_governance accept-plan to bind their exact bytes before source mutation",
+      "complete the configured review of the final bytes",
+    );
+    expect(prompt).toContain(
+      "ged_governance accept-plan to bind those exact bytes before source mutation",
     );
     expect(prompt).toContain("## Commit Preference");
     expect(prompt).toContain("Current setting: ask");
@@ -521,7 +526,14 @@ Describe what this project should achieve.
         },
       };
       await gedCoreExtension(api as never);
-      const ctx = {
+      const ctx: {
+        cwd: string;
+        mode: string;
+        sessionManager: {
+          getSessionId(): string;
+          getBranch?: () => unknown[];
+        };
+      } = {
         cwd: rootDir,
         mode: "rpc",
         sessionManager: { getSessionId: () => "session-a" },
@@ -560,6 +572,21 @@ Describe what this project should achieve.
       );
       const workId = opened.details?.workId as string;
       const paths = await activeGedPaths(rootDir, "session-a");
+      const reviewedPlan = await fingerprintFileSet(rootDir, [
+        paths.specPath,
+        paths.tasksPath,
+        paths.testsPath,
+      ]);
+      ctx.sessionManager.getBranch = () => [
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: "gedpi_plan_review",
+            details: { approved: true, planBinding: reviewedPlan },
+          },
+        },
+      ];
       const legacyState = {
         schemaVersion: 3,
         lifecycleStatus: "verified",

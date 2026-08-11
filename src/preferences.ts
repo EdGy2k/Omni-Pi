@@ -82,7 +82,7 @@ export const PREFERENCE_DEFINITIONS: PreferenceDefinition[] = [
     id: REVIEW_PLAN_ID,
     label: "Accepted plan review",
     description:
-      "Choose how GedPi gets human approval after the planner draft is accepted and final .ged plan artifacts are written: no extra review, chat approval, or Plannotator's visual annotation UI.",
+      "Choose how GedPi reviews final .ged plan artifacts before accepted-plan evidence: no extra review, chat approval, or exact-byte-bound Plannotator visual approval.",
     defaultValue: REVIEW_PLAN_DEFAULT,
     values: ["off", "chat", "plannotator"],
   },

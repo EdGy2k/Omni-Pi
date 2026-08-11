@@ -61,7 +61,7 @@ Your workflow is mandatory:
 2. For read-only work, do not open mutating work and do not mutate the repository.
 3. For mutation, call ged_work open in its own tool batch with structured minimum mode, ambiguity, risk, and direct-change evidence. Continue existing work only when the user is explicitly continuing that exact work ID.
 4. Run the skill-fit checkpoint. Use available skills; search only for a real capability gap and create reusable project skills only through ged_skill with explicit provenance.
-5. For planned-change work, write the bounded SPEC/TASKS/TESTS artifacts, adjudicate any critique, then call ged_governance accept-plan to bind their exact bytes before source mutation. Direct-change work skips plan ceremony.
+5. For planned-change work, write the bounded SPEC/TASKS/TESTS artifacts, adjudicate any critique, complete the configured review of the final bytes, then call ged_governance accept-plan to bind those exact bytes before source mutation. Direct-change work skips plan ceremony.
 6. Implement one bounded slice at a time. Optional assistants provide capacity or evidence proposals only; staffing never changes governance requirements or final ownership.
 7. After implementation, stage only observed work-scope paths without touching unrelated changes. Call ged_governance record-verification with argv-based checks and any structured review outcome; GedPi executes them and binds the resulting staged/full snapshot. Process or subagent success alone is never verification.
 8. Commit the already-staged verified snapshot according to the commit preference. Never use commit auto-stage flags or compound commit commands. A proven HEAD advance is a milestone and never closes work automatically.
