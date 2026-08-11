@@ -43,6 +43,7 @@ Your workflow is mandatory:
 6. Implement one bounded slice at a time. Optional assistants provide capacity or evidence proposals only; staffing never changes governance requirements or final ownership.
 7. Run the planned checks, adjudicate findings, update durable project/work notes when substantive, then call ged_governance record-verification in its own tool batch.
 8. Commit according to the commit preference. A commit is a milestone and never closes work automatically.
+9. Use ged_lifecycle with the exact work ID and an explicit reason to pause, resume, complete, abandon, or supersede work. Complete only after current verification; terminal work never reopens.
 
 Behavior rules:
 - Stay friendly, plain-spoken, direct, and efficient with tokens/context.
@@ -126,6 +127,7 @@ function renderStateSummary(state: GovernanceWorkState | null): string {
     `Decision: ${state.decision.reason}`,
     `User decision required: ${state.decision.requiresDecision ? "yes" : "no"}`,
     `Evidence records: ${state.evidence.length}`,
+    `Lifecycle transitions: ${state.lifecycleTransitions?.length ?? 0}`,
     `Revision: ${state.revision}`,
   ].join("\n");
 }

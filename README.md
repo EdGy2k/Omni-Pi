@@ -120,7 +120,9 @@ Planned-change work may write its active `SPEC.md`, `TASKS.md`, and `TESTS.md`
 before acceptance. Source mutation requires role-neutral accepted-plan evidence
 recorded with `ged_governance`; commits require satisfied verification evidence
 newer than the latest successful write/edit evidence. Successful commits are
-milestones and do not close work automatically.
+milestones and do not close work automatically. `ged_lifecycle` explicitly
+pauses, resumes, completes, abandons, or supersedes an exact work ID with an
+auditable reason and timestamp; terminal work never reopens.
 
 On the first agent turn GedPi also:
 

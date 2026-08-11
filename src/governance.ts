@@ -23,6 +23,14 @@ export const WORK_LIFECYCLES = [
 ] as const;
 
 export type WorkLifecycle = (typeof WORK_LIFECYCLES)[number];
+export const LIFECYCLE_ACTIONS = [
+  "pause",
+  "resume",
+  "complete",
+  "abandon",
+  "supersede",
+] as const;
+export type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 
 export const EXECUTION_PROFILES = [
   "solo",
@@ -130,6 +138,14 @@ export interface GovernancePendingMutation {
   startedAt: string;
 }
 
+export interface GovernanceLifecycleTransition {
+  id: string;
+  from: WorkLifecycle;
+  to: WorkLifecycle;
+  reason: string;
+  recordedAt: string;
+}
+
 export interface GovernanceWorkState {
   schemaVersion: 1;
   revision: number;
@@ -145,6 +161,8 @@ export interface GovernanceWorkState {
   evidence: GovernanceEvidence[];
   /** Optional only for compatibility with schema-v1 records from earlier slices. */
   pendingMutations?: GovernancePendingMutation[];
+  /** Optional only for compatibility with schema-v1 records from earlier slices. */
+  lifecycleTransitions?: GovernanceLifecycleTransition[];
   lifecycle: WorkLifecycle;
 }
 

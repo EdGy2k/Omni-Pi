@@ -89,6 +89,8 @@ describe("Ged brain runtime", () => {
     expect(prompt).toContain("ged_work open");
     expect(prompt).toContain("ged_governance accept-plan");
     expect(prompt).toContain("ged_governance record-verification");
+    expect(prompt).toContain("ged_lifecycle");
+    expect(prompt).toContain("terminal work never reopens");
     expect(prompt).toContain("skill-fit checkpoint");
     expect(prompt).toContain("Optional assistants are available");
     expect(prompt).toContain("staffing never changes governance");
@@ -286,6 +288,7 @@ describe("Ged brain runtime", () => {
     expect(beforeStart.systemPrompt).toContain("BASE");
     expect(beforeStart.systemPrompt).toContain("GedPi Single-Brain Mode");
     expect(beforeStart.systemPrompt).toContain("ged_work open");
+    expect(beforeStart.systemPrompt).toContain("ged_lifecycle");
     expect(beforeStart.systemPrompt).not.toContain("grill-me: needed");
     expect(beforeStart.systemPrompt).toContain(
       "Optional assistants are available",

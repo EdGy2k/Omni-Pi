@@ -9,7 +9,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — slice 5 verified; explicit lifecycle transitions next
+- **Status**: DONE — all six slices verified
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: HIGH

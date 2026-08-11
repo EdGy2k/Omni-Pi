@@ -34,6 +34,14 @@
 - [x] Cover durable pending writes, protected paths, the solo/staffed governance
   matrix, regressions, and commit.
 
-## Later slices
+## Slice 6 — Explicit lifecycle transitions
 
-- [ ] Add explicit lifecycle transitions.
+- [x] Add strict lifecycle transition contracts and serialized store mutation.
+- [x] Register exact-work `ged_lifecycle` pause/resume/complete/abandon/
+  supersede actions.
+- [x] Enforce transition graph, pending-write exclusion, and verified
+  completion.
+- [x] Update projections, prompts, docs, changelog, and Plan 001 status.
+- [x] Cover recovery, terminal rejection, multi-commit behavior, and staffing/
+  legacy non-authority.
+- [x] Run focused/full checks, independent review, and commit.

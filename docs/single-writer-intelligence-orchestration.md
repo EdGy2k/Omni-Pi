@@ -96,6 +96,19 @@ write these transitions automatically.
 A successful commit is a milestone. It does not consume plan evidence or close
 current or legacy work.
 
+### Explicit lifecycle
+
+`ged_lifecycle` changes one exact work ID with a coordinator-owned reason and a
+runtime timestamp. Active work can pause or become completed, abandoned, or
+superseded. Paused work can resume or become terminal. Terminal work never
+transitions again and cannot authorize a later request.
+
+Every accepted lifecycle change appends immutable `from`/`to` history and
+advances governance revision once. Any durable pending mutation blocks a
+transition. Completion additionally requires the same current plan and
+verification evidence required for commit. Commits, staffing changes, subagent
+events, Markdown edits, and legacy checkpoints never change lifecycle.
+
 ### Protected Ged paths
 
 The runtime resolves existing targets and their nearest existing ancestors,

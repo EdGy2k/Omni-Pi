@@ -70,3 +70,13 @@
     commits, and subagent completion alone cannot authorize mutation. Writes
     enter durable pending state before execution, so failed evidence persistence
     or runtime restart cannot revive stale verification.
+- Date: 2026-08-11
+  - Decision: Lifecycle changes are explicit role-neutral transitions recorded
+    in authoritative governance history, never inferred from commits or agent
+    completion.
+  - Why: Multi-commit work must stay active, paused work needs an auditable
+    recovery path, and terminal work must never regain authority implicitly.
+  - Impact: Active work may pause or become terminal; paused work may resume or
+    become terminal; terminal states never transition. Completion additionally
+    requires current commit-grade verification, and all transitions reject
+    pending mutations.

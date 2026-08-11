@@ -9,6 +9,8 @@ import {
 } from "../src/governance.js";
 import {
   appendGovernanceEvidence,
+  beginGovernanceMutation,
+  clearGovernanceMutation,
   compareAndSwapGovernanceState,
   GovernanceStoreError,
   governanceActionBlockReason,
@@ -19,6 +21,7 @@ import {
   recordSatisfiedGovernanceEvidence,
   regenerateGovernanceProjection,
   renderGovernanceProjection,
+  transitionGovernanceLifecycle,
 } from "../src/governance-store.js";
 
 async function setup() {
@@ -114,6 +117,12 @@ describe("governance state store", () => {
       compareAndSwapGovernanceState(rootDir, opened.workId, 1, (state) => ({
         ...state,
         repository: { ...state.repository, worktreeId: "changed" },
+      })),
+    ).rejects.toMatchObject({ code: "invalid-state" });
+    await expect(
+      compareAndSwapGovernanceState(rootDir, opened.workId, 1, (state) => ({
+        ...state,
+        lifecycle: "paused",
       })),
     ).rejects.toMatchObject({ code: "invalid-state" });
     expect((await readGovernanceState(rootDir, opened.workId)).revision).toBe(
@@ -332,6 +341,262 @@ describe("governance state store", () => {
     };
     expect(governanceActionBlockReason(state, "metadata-mutation")).toContain(
       "user-owned decision",
+    );
+  });
+
+  it("records pause, resume, and verified completion as explicit history", async () => {
+    const { rootDir, opened, decision } = await setup();
+    let state = await initializeGovernanceState(rootDir, opened.workId, {
+      decision,
+      executionProfile: "solo",
+    });
+    await expect(
+      transitionGovernanceLifecycle(rootDir, opened.workId, {
+        action: "complete",
+        expectedLifecycle: "active",
+        reason: "Implementation is done",
+      }),
+    ).rejects.toMatchObject({ code: "governance-blocked" });
+
+    state = await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+      id: "accepted-plan",
+      kind: "plan",
+      source: "agent",
+      recordedAt: "2026-08-11T10:00:00.000Z",
+      summary: "Plan accepted",
+      outcome: "satisfied",
+    });
+    state = await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+      id: "current-verification",
+      kind: "verification",
+      source: "agent",
+      recordedAt: "2026-08-11T10:01:00.000Z",
+      summary: "Checks passed",
+      outcome: "satisfied",
+    });
+    state = await transitionGovernanceLifecycle(
+      rootDir,
+      opened.workId,
+      {
+        action: "pause",
+        expectedLifecycle: "active",
+        reason: "Waiting for the next session",
+      },
+      new Date("2026-08-11T10:02:00.000Z"),
+    );
+    expect(state).toMatchObject({ lifecycle: "paused", revision: 3 });
+    expect(await readFile(opened.paths.statePath, "utf8")).toContain(
+      `Resume exact work ID ${opened.workId}`,
+    );
+    state = await transitionGovernanceLifecycle(
+      rootDir,
+      opened.workId,
+      {
+        action: "resume",
+        expectedLifecycle: "paused",
+        reason: "Continuing the approved work",
+      },
+      new Date("2026-08-11T10:03:00.000Z"),
+    );
+    expect(state).toMatchObject({ lifecycle: "active", revision: 4 });
+    state = await transitionGovernanceLifecycle(
+      rootDir,
+      opened.workId,
+      {
+        action: "complete",
+        expectedLifecycle: "active",
+        reason: "All accepted work is verified",
+      },
+      new Date("2026-08-11T10:04:00.000Z"),
+    );
+    expect(state).toMatchObject({ lifecycle: "completed", revision: 5 });
+    expect(state.lifecycleTransitions).toEqual([
+      expect.objectContaining({
+        from: "active",
+        to: "paused",
+        reason: "Waiting for the next session",
+      }),
+      expect.objectContaining({ from: "paused", to: "active" }),
+      expect.objectContaining({ from: "active", to: "completed" }),
+    ]);
+    expect(governanceActionBlockReason(state, "source-mutation")).toContain(
+      "lifecycle completed",
+    );
+    await expect(
+      transitionGovernanceLifecycle(rootDir, opened.workId, {
+        action: "resume",
+        expectedLifecycle: "completed",
+        reason: "Terminal work must not reopen",
+      }),
+    ).rejects.toMatchObject({ code: "governance-blocked" });
+    const projection = await readFile(opened.paths.statePath, "utf8");
+    expect(projection).toContain("Current Phase: Closed");
+    expect(projection).toContain("Active Task: None");
+    expect(projection).toContain("Lifecycle transitions: 3");
+    expect(projection).toContain(
+      "No further lifecycle transition or repository mutation is authorized.",
+    );
+  });
+
+  it("makes abandoned and superseded work terminal", async () => {
+    for (const [action, lifecycle] of [
+      ["abandon", "abandoned"],
+      ["supersede", "superseded"],
+    ] as const) {
+      const { rootDir, opened, decision } = await setup();
+      const state = await initializeGovernanceState(rootDir, opened.workId, {
+        decision,
+        executionProfile: "solo",
+      });
+      const terminal = await transitionGovernanceLifecycle(
+        rootDir,
+        opened.workId,
+        {
+          action,
+          expectedLifecycle: "active",
+          reason: `${action} by explicit coordinator decision`,
+        },
+      );
+      expect(terminal.lifecycle).toBe(lifecycle);
+      expect(terminal.revision).toBe(state.revision + 1);
+      await expect(
+        transitionGovernanceLifecycle(rootDir, opened.workId, {
+          action: "pause",
+          expectedLifecycle: lifecycle,
+          reason: "Terminal work cannot transition",
+        }),
+      ).rejects.toMatchObject({ code: "governance-blocked" });
+    }
+  });
+
+  it("allows paused work to become explicitly terminal", async () => {
+    for (const [action, lifecycle] of [
+      ["complete", "completed"],
+      ["abandon", "abandoned"],
+      ["supersede", "superseded"],
+    ] as const) {
+      const { rootDir, opened, decision } = await setup();
+      await initializeGovernanceState(rootDir, opened.workId, {
+        decision,
+        executionProfile: "solo",
+      });
+      if (action === "complete") {
+        await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+          id: "paused-terminal-plan",
+          kind: "plan",
+          source: "agent",
+          recordedAt: "2026-08-11T10:10:00.000Z",
+          summary: "Plan accepted",
+          outcome: "satisfied",
+        });
+        await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+          id: "paused-terminal-verification",
+          kind: "verification",
+          source: "agent",
+          recordedAt: "2026-08-11T10:11:00.000Z",
+          summary: "Checks passed",
+          outcome: "satisfied",
+        });
+      }
+      await transitionGovernanceLifecycle(rootDir, opened.workId, {
+        action: "pause",
+        expectedLifecycle: "active",
+        reason: "Pause before terminal decision",
+      });
+      const terminal = await transitionGovernanceLifecycle(
+        rootDir,
+        opened.workId,
+        {
+          action,
+          expectedLifecycle: "paused",
+          reason: `${action} paused work explicitly`,
+        },
+      );
+      expect(terminal.lifecycle).toBe(lifecycle);
+      expect(terminal.lifecycleTransitions?.at(-1)).toMatchObject({
+        from: "paused",
+        to: lifecycle,
+      });
+    }
+  });
+
+  it("serializes competing lifecycle transitions and rejects pending mutations", async () => {
+    const { rootDir, opened, decision } = await setup();
+    await initializeGovernanceState(rootDir, opened.workId, {
+      decision,
+      executionProfile: "solo",
+    });
+    await transitionGovernanceLifecycle(rootDir, opened.workId, {
+      action: "pause",
+      expectedLifecycle: "active",
+      reason: "Prepare competing paused transitions",
+    });
+    const competing = await Promise.allSettled([
+      transitionGovernanceLifecycle(rootDir, opened.workId, {
+        action: "resume",
+        expectedLifecycle: "paused",
+        reason: "Resume concurrently",
+      }),
+      transitionGovernanceLifecycle(rootDir, opened.workId, {
+        action: "abandon",
+        expectedLifecycle: "paused",
+        reason: "Abandon concurrently",
+      }),
+    ]);
+    expect(
+      competing.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      competing.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    const terminalOrPaused = await readGovernanceState(rootDir, opened.workId);
+    expect(terminalOrPaused.revision).toBe(2);
+    expect(terminalOrPaused.lifecycleTransitions).toHaveLength(2);
+
+    const pendingSetup = await setup();
+    await initializeGovernanceState(
+      pendingSetup.rootDir,
+      pendingSetup.opened.workId,
+      { decision: pendingSetup.decision, executionProfile: "solo" },
+    );
+    await recordSatisfiedGovernanceEvidence(
+      pendingSetup.rootDir,
+      pendingSetup.opened.workId,
+      {
+        id: "pending-plan",
+        kind: "plan",
+        source: "agent",
+        recordedAt: "2026-08-11T11:00:00.000Z",
+        summary: "Plan accepted",
+        outcome: "satisfied",
+      },
+    );
+    await beginGovernanceMutation(
+      pendingSetup.rootDir,
+      pendingSetup.opened.workId,
+      {
+        id: "pending-write",
+        requestId: "request-a",
+        toolCallId: "write-a",
+        target: "src/a.ts",
+        startedAt: "2026-08-11T11:01:00.000Z",
+      },
+    );
+    await expect(
+      transitionGovernanceLifecycle(
+        pendingSetup.rootDir,
+        pendingSetup.opened.workId,
+        {
+          action: "pause",
+          expectedLifecycle: "active",
+          reason: "Unsafe while write is pending",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "governance-blocked" });
+    await clearGovernanceMutation(
+      pendingSetup.rootDir,
+      pendingSetup.opened.workId,
+      "pending-write",
     );
   });
 });

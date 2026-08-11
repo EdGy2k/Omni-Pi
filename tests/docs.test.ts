@@ -56,6 +56,8 @@ describe("documentation coverage", () => {
 
     expect(orchestration).toContain("## Governance plane");
     expect(orchestration).toContain("### Role-neutral transitions");
+    expect(orchestration).toContain("### Explicit lifecycle");
+    expect(orchestration).toContain("Terminal work never");
     expect(orchestration).toContain("sole machine authority");
     expect(orchestration).toContain("later in append order");
     expect(orchestration).toContain("## Current enforcement boundary");

@@ -71,6 +71,9 @@ describe("commit settings", () => {
     expect(buildAutoCommitWorkflowPrompt("on")).toContain(
       "create a conventional git commit without asking",
     );
+    expect(buildAutoCommitWorkflowPrompt("on")).toContain(
+      "never changes work lifecycle",
+    );
     expect(buildPlanReviewWorkflowPrompt("off")).toContain(
       "continue without separate human approval",
     );

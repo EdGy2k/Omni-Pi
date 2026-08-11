@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,8 +14,10 @@ import {
   type ExecutionProfile,
   type GovernanceDecision,
   type GovernanceEvidence,
+  type GovernanceLifecycleTransition,
   type GovernancePendingMutation,
   type GovernanceWorkState,
+  type LifecycleAction,
   WORK_LIFECYCLES,
   WORK_MODES,
   type WorkLifecycle,
@@ -178,6 +180,32 @@ function validPendingMutation(
   );
 }
 
+function validLifecycleTransition(
+  value: unknown,
+): value is GovernanceLifecycleTransition {
+  if (!isObject(value)) return false;
+  return (
+    hasOnlyKeys(value, ["id", "from", "to", "reason", "recordedAt"]) &&
+    nonBlank(value.id) &&
+    typeof value.from === "string" &&
+    WORK_LIFECYCLES.includes(value.from as (typeof WORK_LIFECYCLES)[number]) &&
+    typeof value.to === "string" &&
+    WORK_LIFECYCLES.includes(value.to as (typeof WORK_LIFECYCLES)[number]) &&
+    ((value.from === "active" &&
+      (value.to === "paused" ||
+        value.to === "completed" ||
+        value.to === "abandoned" ||
+        value.to === "superseded")) ||
+      (value.from === "paused" &&
+        (value.to === "active" ||
+          value.to === "completed" ||
+          value.to === "abandoned" ||
+          value.to === "superseded"))) &&
+    nonBlank(value.reason) &&
+    validDate(value.recordedAt)
+  );
+}
+
 function validateState(value: unknown): GovernanceWorkState {
   if (!isObject(value)) {
     throw new GovernanceStoreError(
@@ -189,6 +217,7 @@ function validateState(value: unknown): GovernanceWorkState {
   const approvals = value.approvals;
   const evidence = value.evidence;
   const pendingMutations = value.pendingMutations;
+  const lifecycleTransitions = value.lifecycleTransitions;
   if (
     !hasOnlyKeys(value, [
       "schemaVersion",
@@ -204,6 +233,7 @@ function validateState(value: unknown): GovernanceWorkState {
       "approvals",
       "evidence",
       "pendingMutations",
+      "lifecycleTransitions",
       "lifecycle",
     ]) ||
     value.schemaVersion !== 1 ||
@@ -244,6 +274,11 @@ function validateState(value: unknown): GovernanceWorkState {
       (Array.isArray(pendingMutations) &&
         pendingMutations.every(validPendingMutation))
     ) ||
+    !(
+      lifecycleTransitions === undefined ||
+      (Array.isArray(lifecycleTransitions) &&
+        lifecycleTransitions.every(validLifecycleTransition))
+    ) ||
     typeof value.lifecycle !== "string" ||
     !WORK_LIFECYCLES.includes(
       value.lifecycle as (typeof WORK_LIFECYCLES)[number],
@@ -259,15 +294,42 @@ function validateState(value: unknown): GovernanceWorkState {
   const pendingIds = (pendingMutations ?? []).map(
     (entry) => (entry as GovernancePendingMutation).id,
   );
+  const lifecycleIds = (lifecycleTransitions ?? []).map(
+    (entry) => (entry as GovernanceLifecycleTransition).id,
+  );
   if (
     new Set(evidenceIds).size !== evidenceIds.length ||
     new Set(approvalIds).size !== approvalIds.length ||
-    new Set(pendingIds).size !== pendingIds.length
+    new Set(pendingIds).size !== pendingIds.length ||
+    new Set(lifecycleIds).size !== lifecycleIds.length
   ) {
     throw new GovernanceStoreError(
       "Governance state contains duplicate record IDs.",
       "invalid-state",
     );
+  }
+  if (lifecycleTransitions && lifecycleTransitions.length > 0) {
+    for (let index = 1; index < lifecycleTransitions.length; index += 1) {
+      if (
+        (lifecycleTransitions[index - 1] as GovernanceLifecycleTransition)
+          .to !==
+        (lifecycleTransitions[index] as GovernanceLifecycleTransition).from
+      ) {
+        throw new GovernanceStoreError(
+          "Governance lifecycle history is not contiguous.",
+          "invalid-state",
+        );
+      }
+    }
+    if (
+      (lifecycleTransitions.at(-1) as GovernanceLifecycleTransition).to !==
+      value.lifecycle
+    ) {
+      throw new GovernanceStoreError(
+        "Governance lifecycle does not match its latest transition.",
+        "invalid-state",
+      );
+    }
   }
   return value as unknown as GovernanceWorkState;
 }
@@ -437,16 +499,41 @@ async function writeStructuredState(
 
 export function renderGovernanceProjection(state: GovernanceWorkState): string {
   const line = (value: string) => value.replace(/\s+/gu, " ").trim();
-  const blockers = state.decision.requiresDecision
-    ? "A user-owned decision is required"
-    : "None";
+  const latestTransition = state.lifecycleTransitions?.at(-1);
+  const blockers =
+    state.lifecycle !== "active"
+      ? `Lifecycle is ${state.lifecycle}`
+      : state.decision.requiresDecision
+        ? "A user-owned decision is required"
+        : (state.pendingMutations?.length ?? 0) > 0
+          ? "A mutation is pending durable completion evidence"
+          : "None";
+  const phase =
+    state.lifecycle === "active"
+      ? "Build"
+      : state.lifecycle === "paused"
+        ? "Paused"
+        : "Closed";
+  const activeTask =
+    state.lifecycle === "active" || state.lifecycle === "paused"
+      ? line(state.currentSlice ?? state.summary)
+      : "None";
+  const statusSummary = latestTransition
+    ? `${state.lifecycle} — ${line(latestTransition.reason)}`
+    : `${state.decision.mode} — ${line(state.decision.reason)}`;
+  const nextStep =
+    state.lifecycle === "active"
+      ? "Follow the authoritative governance decision and current slice."
+      : state.lifecycle === "paused"
+        ? `Resume exact work ID ${state.workId} with ged_lifecycle before continuing.`
+        : "No further lifecycle transition or repository mutation is authorized.";
   return `# State
 
-Current Phase: ${state.lifecycle === "active" ? "Build" : "Check"}
-Active Task: ${line(state.currentSlice ?? state.summary)}
-Status Summary: ${state.decision.mode} — ${line(state.decision.reason)}
+Current Phase: ${phase}
+Active Task: ${activeTask}
+Status Summary: ${statusSummary}
 Blockers: ${blockers}
-Next Step: Follow the authoritative governance decision and current slice.
+Next Step: ${nextStep}
 
 ## Governance
 
@@ -457,6 +544,7 @@ Next Step: Follow the authoritative governance decision and current slice.
 - Evidence records: ${state.evidence.length}
 - Approval records: ${state.approvals.length}
 - Pending mutations: ${state.pendingMutations?.length ?? 0}
+- Lifecycle transitions: ${state.lifecycleTransitions?.length ?? 0}
 `;
 }
 
@@ -524,6 +612,7 @@ export async function initializeGovernanceState(
       approvals: [],
       evidence: input.evidence ?? [],
       pendingMutations: [],
+      lifecycleTransitions: [],
       lifecycle: input.lifecycle ?? "active",
     });
     await writeStructuredState(rootDir, workId, state);
@@ -554,11 +643,14 @@ export async function compareAndSwapGovernanceState(
       candidate.schemaVersion !== current.schemaVersion ||
       candidate.createdAt !== current.createdAt ||
       candidate.summary !== current.summary ||
+      candidate.lifecycle !== current.lifecycle ||
+      JSON.stringify(candidate.lifecycleTransitions ?? []) !==
+        JSON.stringify(current.lifecycleTransitions ?? []) ||
       JSON.stringify(candidate.repository) !==
         JSON.stringify(current.repository)
     ) {
       throw new GovernanceStoreError(
-        "Governance updates cannot change identity or creation metadata.",
+        "Governance CAS updates cannot change identity, creation metadata, or lifecycle history.",
         "invalid-state",
       );
     }
@@ -817,4 +909,112 @@ export async function recordSatisfiedGovernanceEvidence(
     },
     now,
   );
+}
+
+export interface GovernanceLifecycleTransitionInput {
+  action: LifecycleAction;
+  expectedLifecycle: WorkLifecycle;
+  reason: string;
+}
+
+function lifecycleTarget(
+  current: WorkLifecycle,
+  action: LifecycleAction,
+): WorkLifecycle | null {
+  if (current === "active") {
+    if (action === "pause") return "paused";
+    if (action === "complete") return "completed";
+    if (action === "abandon") return "abandoned";
+    if (action === "supersede") return "superseded";
+    return null;
+  }
+  if (current === "paused") {
+    if (action === "resume") return "active";
+    if (action === "complete") return "completed";
+    if (action === "abandon") return "abandoned";
+    if (action === "supersede") return "superseded";
+  }
+  return null;
+}
+
+export async function transitionGovernanceLifecycle(
+  rootDir: string,
+  workId: string,
+  input: GovernanceLifecycleTransitionInput,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  const reason = input.reason.replace(/\s+/gu, " ").trim();
+  if (!reason || reason.length > 500) {
+    throw new GovernanceStoreError(
+      "Lifecycle transition reason must contain 1 to 500 characters.",
+      "invalid-state",
+    );
+  }
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    if (current.lifecycle !== input.expectedLifecycle) {
+      throw new GovernanceStoreError(
+        `Ged work ${workId} lifecycle changed from expected ${input.expectedLifecycle} to ${current.lifecycle}. Retry from current authoritative state.`,
+        "governance-blocked",
+      );
+    }
+    if ((current.pendingMutations?.length ?? 0) > 0) {
+      throw new GovernanceStoreError(
+        `Ged work ${workId} has a pending mutation and cannot change lifecycle.`,
+        "governance-blocked",
+      );
+    }
+    const target = lifecycleTarget(current.lifecycle, input.action);
+    if (!target) {
+      throw new GovernanceStoreError(
+        `Lifecycle action ${input.action} is invalid from ${current.lifecycle}.`,
+        "governance-blocked",
+      );
+    }
+    if (input.action === "complete") {
+      const blocked = governanceActionBlockReason(
+        { ...current, lifecycle: "active" },
+        "commit",
+      );
+      if (blocked) {
+        throw new GovernanceStoreError(
+          `Ged work ${workId} cannot complete: ${blocked}`,
+          "governance-blocked",
+        );
+      }
+    }
+    if (input.action === "resume") {
+      const blocked = governanceActionBlockReason(
+        { ...current, lifecycle: "active" },
+        "metadata-mutation",
+      );
+      if (blocked) {
+        throw new GovernanceStoreError(
+          `Ged work ${workId} cannot resume: ${blocked}`,
+          "governance-blocked",
+        );
+      }
+    }
+    const transition: GovernanceLifecycleTransition = {
+      id: `lifecycle-${randomUUID()}`,
+      from: current.lifecycle,
+      to: target,
+      reason,
+      recordedAt: now.toISOString(),
+    };
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      lifecycle: target,
+      lifecycleTransitions: [
+        ...(current.lifecycleTransitions ?? []),
+        transition,
+      ],
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
 }

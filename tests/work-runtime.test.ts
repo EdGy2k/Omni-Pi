@@ -76,7 +76,7 @@ function runtimeHarness(requestIds: string[]) {
       return results;
     },
     execute(
-      name: "ged_work" | "ged_governance",
+      name: "ged_work" | "ged_governance" | "ged_lifecycle",
       params: Record<string, unknown>,
       ctx: TestContext,
       id = `${name}-call`,
@@ -331,6 +331,7 @@ describe("Ged governance runtime", () => {
     );
     state = await readGovernanceState(rootDir, workId);
     expect(state.lifecycle).toBe("active");
+    expect(state.lifecycleTransitions).toEqual([]);
 
     await runtime.emit(
       "before_agent_start",
@@ -357,6 +358,98 @@ describe("Ged governance runtime", () => {
       ctx,
       "continue-call",
     );
+  });
+
+  it("pauses, resumes, and explicitly completes exact work", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-lifecycle-"));
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-1", "request-2", "request-3"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute(
+      "ged_work",
+      directOpen("Lifecycle task"),
+      ctx,
+    );
+    const workId = opened.details?.workId as string;
+
+    const paused = await runtime.execute(
+      "ged_lifecycle",
+      { action: "pause", workId, reason: "Pause between sessions" },
+      ctx,
+    );
+    expect(paused.details).toMatchObject({
+      workId,
+      from: "active",
+      to: "paused",
+    });
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "paused-write",
+            toolName: "write",
+            input: { path: "src/a.ts" },
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("lifecycle paused"),
+    });
+
+    await startRequest(runtime, ctx);
+    const resumed = await runtime.execute(
+      "ged_lifecycle",
+      { action: "resume", workId, reason: "Continue the same task" },
+      ctx,
+    );
+    expect(resumed.details).toMatchObject({ from: "paused", to: "active" });
+    await runtime.execute("ged_work", { action: "continue", workId }, ctx);
+    await successfulWrite(runtime, ctx, "lifecycle-write", "src/a.ts");
+    await expect(
+      runtime.execute(
+        "ged_lifecycle",
+        { action: "complete", workId, reason: "Implementation finished" },
+        ctx,
+      ),
+    ).rejects.toThrow("no satisfied verification evidence newer");
+    await runtime.execute(
+      "ged_governance",
+      { action: "record-verification", summary: "All checks passed" },
+      ctx,
+    );
+    const completed = await runtime.execute(
+      "ged_lifecycle",
+      { action: "complete", workId, reason: "Verified work is complete" },
+      ctx,
+    );
+    expect(completed.details).toMatchObject({
+      from: "active",
+      to: "completed",
+    });
+    expect(await readGovernanceState(rootDir, workId)).toMatchObject({
+      lifecycle: "completed",
+      lifecycleTransitions: [
+        expect.objectContaining({ from: "active", to: "paused" }),
+        expect.objectContaining({ from: "paused", to: "active" }),
+        expect.objectContaining({ from: "active", to: "completed" }),
+      ],
+    });
+
+    await startRequest(runtime, ctx);
+    await expect(
+      runtime.execute("ged_work", { action: "continue", workId }, ctx),
+    ).rejects.toThrow("lifecycle completed");
+    await expect(
+      runtime.execute(
+        "ged_lifecycle",
+        { action: "resume", workId, reason: "Terminal work cannot reopen" },
+        ctx,
+      ),
+    ).rejects.toThrow("invalid from completed");
   });
 
   it("allows planned artifacts before acceptance and source writes only after acceptance", async () => {

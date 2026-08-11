@@ -24,6 +24,10 @@
   make earlier verification stale, and optional subagent completion no longer
   grants authority. Protected `.ged` state is also guarded through symlink
   resolution. Commits no longer auto-close work.
+- Added explicit `ged_lifecycle` transitions for pausing, resuming, completing,
+  abandoning, and superseding exact work IDs. Lifecycle history is append-only,
+  completion requires current verification, pending mutations block
+  transitions, and terminal work cannot be reopened.
 
 ### Dependencies
 

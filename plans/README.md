@@ -26,7 +26,7 @@ durable memory. Execute in order unless dependencies say otherwise.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |---|---|---|---|---|---|
 | 000 | Modernize Pi, subagent, and intercom contracts | P0 | M | — | DONE |
-| 001 | Introduce the task-scoped governance kernel | P0 | L | 000 | IN PROGRESS |
+| 001 | Introduce the task-scoped governance kernel | P0 | L | 000 | DONE |
 | 002 | Bind mutation, plan approval, verification, and commits to content | P0 | L | 001 | TODO |
 | 003 | Add adaptive staffing and GPT-5.6 role profiles | P1 | M | 000, 001 | TODO |
 | 004 | Simplify durable artifacts and skill lifecycle | P1 | L | 001, 002 | TODO |

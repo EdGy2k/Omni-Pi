@@ -7,7 +7,7 @@
 - `src/brain.ts`: main-agent system prompt and durable project context assembly.
 - `src/governance.ts`, `src/governance-store.ts`, and `src/work-runtime.ts`:
   authoritative work modes, role-neutral evidence, current-request binding, and
-  mutation/commit guards.
+  mutation/commit guards plus explicit append-only lifecycle transitions.
 - `src/orchestration.ts` + `src/vendor/shared-checkpoints.js`: optional staffing
   prompt plus non-authorizing legacy checkpoint compatibility.
 - `src/agent-settings.ts` + `src/commands.ts`: role/model settings and runtime

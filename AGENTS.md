@@ -68,6 +68,9 @@ Direct-change work skips plan ceremony. After checks and finding adjudication,
 record current verification evidence before commit. Optional assistants can
 inspect, draft, critique, implement isolated slices, or verify, but the main
 brain accepts evidence and retains all scope/publication authority.
+Lifecycle is explicit: use `ged_lifecycle` with an exact work ID and reason;
+commits and assistant events never pause, resume, complete, abandon, or
+supersede work.
 
 The Ged workflow is always active:
 - lazily initialize or migrate `.ged/` on the first real agent turn

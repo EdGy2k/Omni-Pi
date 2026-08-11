@@ -31,6 +31,7 @@ import {
   initializeGovernanceState,
   readGovernanceState,
   recordSatisfiedGovernanceEvidence,
+  transitionGovernanceLifecycle,
 } from "./governance-store.js";
 import { ensureLegacyCheckpointMigration } from "./legacy-migration.js";
 import { isGitCommitCommand } from "./orchestration.js";
@@ -66,6 +67,15 @@ interface GedGovernanceToolDetails {
   revision: number;
 }
 
+interface GedLifecycleToolDetails {
+  action: "pause" | "resume" | "complete" | "abandon" | "supersede";
+  workId: string;
+  from: "active" | "paused";
+  to: "active" | "paused" | "completed" | "abandoned" | "superseded";
+  transitionId: string;
+  revision: number;
+}
+
 interface OpenGovernanceParams {
   minimumMode?: "direct-change" | "planned-change";
   ambiguity?: "sufficient" | "decision-needed";
@@ -89,7 +99,7 @@ ${priorWork}
 
 Before repository mutation, call ged_work in a separate tool batch. Open new work with a concise summary plus structured ambiguity, risk, minimum mode, and direct-change evidence. Continue only the exact work ID when the user is continuing that task.
 
-Read-only work needs no selection and must not mutate. Planned-change work may write bound .ged planning artifacts before acceptance; source mutation requires ged_governance accept-plan. After checks pass, record-verification before committing. Run each transition in its own tool batch.`;
+Read-only work needs no selection and must not mutate. Planned-change work may write bound .ged planning artifacts before acceptance; source mutation requires ged_governance accept-plan. After checks pass, record-verification before committing. Use ged_lifecycle with an exact work ID to pause, resume, complete, abandon, or supersede work; commits never change lifecycle. Run each transition in its own tool batch.`;
 }
 
 function bindingBlockReason(): string {
@@ -718,6 +728,95 @@ export function registerGedWorkRuntime(
           {
             type: "text",
             text: `Recorded ${params.action} evidence for Ged work ${activeRequest.workId} at revision ${state.revision}.`,
+          },
+        ],
+        details,
+      };
+    },
+  });
+
+  api.registerTool({
+    name: "ged_lifecycle",
+    label: "Ged lifecycle",
+    description:
+      "Explicitly pause, resume, complete, abandon, or supersede one exact governed work item. Commits and staffing never change lifecycle. Run in its own tool batch.",
+    promptSnippet: "Transition the exact governed work lifecycle explicitly",
+    promptGuidelines: [
+      "Use the exact work ID and a concise coordinator-owned reason.",
+      "Complete only after current verification. Resume only paused work; terminal work cannot be reopened.",
+      "Active work must already be bound to this request with ged_work open or continue.",
+    ],
+    parameters: Type.Object(
+      {
+        action: StringEnum([
+          "pause",
+          "resume",
+          "complete",
+          "abandon",
+          "supersede",
+        ] as const),
+        workId: Type.String({ minLength: 1 }),
+        reason: Type.String({ minLength: 1, maxLength: 500 }),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const { request: activeRequest } = requestState(ctx.cwd, sessionId);
+      if (!activeRequest) {
+        throw new Error(
+          "ged_lifecycle can only run inside the current agent request.",
+        );
+      }
+      const before = await readGovernanceState(ctx.cwd, params.workId);
+      if (before.lifecycle === "active") {
+        if (
+          activeRequest.workId !== params.workId ||
+          !(await isActiveWorkBoundToRequest(
+            ctx.cwd,
+            { sessionId, requestId: activeRequest.requestId },
+            params.workId,
+          ))
+        ) {
+          throw new Error(
+            "Active work lifecycle changes require ged_work open or continue for the exact work ID in this request.",
+          );
+        }
+      } else if (
+        activeRequest.workId &&
+        activeRequest.workId !== params.workId
+      ) {
+        throw new Error(
+          `This request is already bound to different Ged work ${activeRequest.workId}.`,
+        );
+      }
+      const state = await transitionGovernanceLifecycle(
+        ctx.cwd,
+        params.workId,
+        {
+          action: params.action,
+          expectedLifecycle: before.lifecycle,
+          reason: params.reason,
+        },
+      );
+      const transition = state.lifecycleTransitions?.at(-1);
+      if (!transition) {
+        throw new Error("Lifecycle transition was not persisted.");
+      }
+      const details: GedLifecycleToolDetails = {
+        action: params.action,
+        workId: params.workId,
+        from: transition.from as "active" | "paused",
+        to: transition.to,
+        transitionId: transition.id,
+        revision: state.revision,
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Transitioned Ged work ${params.workId} from ${details.from} to ${details.to} at revision ${details.revision}.`,
           },
         ],
         details,
