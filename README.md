@@ -92,7 +92,7 @@ GedPi bundles [Glimpse](https://github.com/HazAT/glimpse) for native micro-UI wi
 | `/push` | Push the current branch, with automatic recovery flow if the first push fails |
 | `/settings` | Open Pi settings, including native Pi theme selection |
 | `/update` | Check for GedPi updates |
-| `/grill-me` | Start an explicit one-question-at-a-time clarification session, or record why clarification is skipped as sufficient |
+| `/grill-me` | Ask one concise question at a time when a genuine user-owned decision is unresolved |
 | `/rtk` | Install RTK and check Ged's automatic bash-side RTK routing (status, install) |
 | `/ged-agents` | Open the interactive subagent setup menu in UI sessions; configure role models, thinking levels, ordered fallbacks, critique mode, intercom, and optional workers. Use `/ged-agents status` for text status. |
 | `/ged-settings` | Configure workflow preferences, including accepted-plan review: no extra review, chat approval, or visual approval (Glimpse preferred, browser fallback) |
@@ -103,89 +103,59 @@ GedPi checks for new versions on startup (cached, re-checks every 4 hours). When
 
 ## Ged Workflow
 
-GedPi always runs the full Ged workflow. There is no toggle — the agent classifies tasks as trivial or non-trivial and adjusts its behavior automatically.
+GedPi uses three governance modes, independent of optional execution staffing:
 
-- On the first agent turn, Ged lazily initializes or migrates `.ged/`.
-- Ged discovers standards from files like `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Copilot instructions, Cursor rules, Windsurf rules, and Continue rules, then asks whether to keep those standards in Ged's durable memory.
-- Ged maintains a runtime repo map in `.pi/repo-map/` so prompts include a compact ranked view of important files and symbols.
-- In Git repos, Ged ensures `.pi/` is ignored because that directory is only runtime-local Pi state.
-- Every planned or executed task resolves required skills: in subagent mode, `ged-explorer` performs read-only skill-fit reconnaissance; the main brain then auto-installs matching skills into `.ged/project-skills/`, creates a project skill when none exists, records task-to-skill dependencies, and removes project skills once no open task still needs them.
+- **read-only** — inspect, explain, research, or report without repository mutation;
+- **direct-change** — clear, bounded, reversible work with a deterministic check;
+- **planned-change** — ambiguous, high-risk, explicitly planned, or otherwise
+  direct-change-ineligible work.
 
-## Orchestration Models
+For mutation, the brain opens task-scoped work with `ged_work`. The runtime
+resolves mode from structured ambiguity, risk, minimum-mode, and direct-change
+evidence, then stores the authoritative decision in
+`.ged/runtime/<work-id>/governance.json`. A fresh request must explicitly open or
+continue the exact work item before mutation.
 
-GedPi runs in one of two orchestration modes, controlled by `/ged-agents on|off`.
+Planned-change work may write its active `SPEC.md`, `TASKS.md`, and `TESTS.md`
+before acceptance. Source mutation requires role-neutral accepted-plan evidence
+recorded with `ged_governance`; commits require satisfied verification evidence
+newer than the latest successful write/edit evidence. Successful commits are
+milestones and do not close work automatically.
 
-### Single-Brain Mode (default)
+On the first agent turn GedPi also:
 
-The agent does everything inline — classification, clarification (grill-me), skill-fit, planning, implementation, and verification — all in one brain.
+- lazily initializes or migrates `.ged/`;
+- preserves legacy branch/root checkpoint data in ignored byte-exact backups,
+  never as authorization;
+- discovers external project standards and asks whether to retain them;
+- maintains a compact runtime repo map under ignored `.pi/` state;
+- runs skill-fit and installs/creates project skills only for real reusable
+  capability gaps.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   GEDPI BRAIN                        │
-│                                                      │
-│  1. classify  2. clarify  3. skill-fit  4. plan     │
-│  5. implement  6. verify  7. commit  8. record      │
-│                                                      │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────────┐  │
-│  │ .ged/    │  │ source   │  │ .ged/runtime/     │  │
-│  │ PROJECT  │  │ files    │  │ STATE.md          │  │
-│  │ STANDARDS│  │          │  │ SESSION-SUMMARY   │  │
-│  │ work/    │  │          │  │ checkpoints.json  │  │
-│  │ SPEC.md  │  │          │  │                   │  │
-│  │ TASKS.md │  │          │  │                   │  │
-│  │ TESTS.md │  │          │  │                   │  │
-│  └──────────┘  └──────────┘  └───────────────────┘  │
-└─────────────────────────────────────────────────────┘
-```
+## Execution Staffing
 
-### Subagent Mode (`/ged-agents on`)
+`/ged-agents on|off` changes available capacity, not governance. With staffing
+disabled, the coordinator performs the work directly. With staffing enabled,
+focused assistants may inspect, draft, critique, implement isolated slices, or
+verify. Their results are evidence proposals only: no role name, launch,
+completion, or disabled-role fallback authorizes mutation. The coordinator
+owns scope, decisions, final artifacts, evidence acceptance, commits, pushes,
+and lifecycle.
 
-The main brain delegates intelligence-gathering to read-only subagents. It remains the sole writer, synthesizer, and decision owner. Structural guards enforce the workflow.
+Keep one writer per checkout/worktree. Use isolated worktrees only for
+intentionally parallel writers. Native child-supervisor communication handles
+spawned children; `pi-intercom` remains limited to explicit independent-session
+dependencies.
 
-```
-                        ┌─────────────────────────┐
-                        │     GEDPI BRAIN          │
-                        │   (single writer)        │
-                        │                          │
-                        │  classify · clarify      │
-                        │  synthesize · adjudicate │
-                        │  implement · commit      │
-                        └─────┬──────────┬────────┘
-                              │          │
-              ┌───────────────┘          └───────────────┐
-              ▼                                          ▼
-┌──────────────────────────┐              ┌──────────────────────────┐
-│   ged-explorer           │              │   ged-planner            │
-│   (read-only, cheap)     │              │   (read-only)            │
-│                          │              │                          │
-│  • skill-fit recon       │              │  • critique plan          │
-│  • scout codebase        │              │  • identify edge cases    │
-│  • map structure         │              │  • spot missing context   │
-│  • report with evidence  │              │  • judge semantic         │
-│                          │              │    sufficiency            │
-└──────────────────────────┘              └──────────────────────────┘
+### Current guard boundary
 
-              ┌──────────────────────────┐
-              │   ged-verifier           │
-              │   (read-only)            │
-              │                          │
-              │  • review diff & tests   │
-              │  • report blockers       │
-              │  • suggest fixes         │
-              │  • clean-context review  │
-              └──────────────────────────┘
-
-┌───────────────────────────────────────────────────────────────┐
-│                      STRUCTURAL GUARDS                         │
-│                                                                │
-│  ✗ No source inspection before explorer                        │
-│  ✗ No edits without trusted planner + explorer + planAcceptance│
-│  ✗ No commit without trusted verifier checkpoint               │
-│  ✗ No planner without clarification evidence                   │
-│  ✗ Planner consumed after every commit                         │
-│  ✗ Only .md and .ged/ reads allowed pre-explorer               │
-└───────────────────────────────────────────────────────────────┘
-```
+GedPi's runtime guards are an accident-prevention and evidence boundary, not an
+OS sandbox. They currently enforce request binding and authoritative governance
+for Pi `write`, `edit`, and detected `git commit` calls, protect runtime-owned
+`.ged` paths through resolved symlinks, durably mark writes/edits pending before
+execution, and record implementation evidence after successful completion.
+Plan 002 broadens mutation-tool detection and binds approvals/verification to
+content and staged Git bytes.
 
 ## Durable Memory
 
@@ -224,56 +194,22 @@ each new agent request must explicitly open or continue work before mutation.
 └── META.json           machine-readable work metadata
 ```
 
-### Runtime — session state
+### Runtime — authoritative machine state
 
-Per work item, ephemeral. Tracks current phase, session handoff, and checkpoint
-state. Session-scoped pointers live under
-`.ged/runtime/active-work/<session-key>.json` and are ignored with the rest of
-runtime state.
+Per work item, runtime state is ignored and machine-owned. Markdown files are
+projections/handoff notes only; guards read `governance.json`.
 
 ```
 .ged/runtime/<work-id>/
-├── governance.json     authoritative governance state and revision
-├── STATE.md            current phase, active task, blockers, next step
-├── SESSION-SUMMARY.md  cross-session handoff notes
-└── checkpoints.json    workflow checkpoint state (schema v3)
+├── governance.json     authoritative decision, lifecycle, evidence, revision
+├── STATE.md            regenerable human-readable projection
+└── SESSION-SUMMARY.md  optional handoff notes
 ```
 
-### Checkpoint Schema (v3)
-
-The checkpoint file records checkpoint provenance. Structural guards trust auto-recorded checkpoints written from completed `subagent` results, plus explicit `source: "fallback"` checkpoints with reasons when a role is disabled and the main agent performed that responsibility. Unproven hand-written entries are rejected.
-
-```json
-{
-  "schemaVersion": 3,
-  "lifecycleStatus": "active",
-  "classification": "non-trivial",
-  "classificationReason": "Feature implementation",
-  "clarification": {
-    "status": "completed",
-    "source": "manual",
-    "evidence": { "goal": "...", "users": "...", "scope": "...", "constraints": "..." }
-  },
-  "planCheckpoints": {
-    "ged-explorer": { "source": "auto", "status": "completed", ... },
-    "ged-planner":  { "source": "auto", "status": "completed", ... }
-  },
-  "planAcceptance": {
-    "status": "accepted",
-    "source": "manual",
-    "timestamp": "...",
-    "planPaths": [".ged/work/<work-id>/SPEC.md", ".ged/work/<work-id>/TASKS.md", ".ged/work/<work-id>/TESTS.md"]
-  },
-  "taskCheckpoints": {
-    "T01": {
-      "ged-verifier": { "source": "auto", "status": "completed", ... }
-    }
-  },
-  "workerRuns": [
-    { "agent": "ged-worker", "source": "auto", "status": "completed", "runId": "...", "sliceId": "T01a", "sourceMode": "foreground" }
-  ]
-}
-```
+Session-scoped selection pointers live under
+`.ged/runtime/active-work/<session-key>.json`. Legacy `checkpoints.json` records
+are discovered only by the migration compatibility path, copied to an immutable
+ignored backup, and never selected or trusted as current authority.
 
 ## Development
 

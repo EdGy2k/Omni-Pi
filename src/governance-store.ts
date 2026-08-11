@@ -14,6 +14,7 @@ import {
   type ExecutionProfile,
   type GovernanceDecision,
   type GovernanceEvidence,
+  type GovernancePendingMutation,
   type GovernanceWorkState,
   WORK_LIFECYCLES,
   WORK_MODES,
@@ -59,12 +60,18 @@ export class GovernanceStoreError extends Error {
       | "already-exists"
       | "invalid-state"
       | "stale-revision"
-      | "duplicate-evidence",
+      | "duplicate-evidence"
+      | "governance-blocked",
   ) {
     super(message);
     this.name = "GovernanceStoreError";
   }
 }
+
+export type GovernanceGuardAction =
+  | "metadata-mutation"
+  | "source-mutation"
+  | "commit";
 
 export interface InitializeGovernanceStateInput {
   decision: GovernanceDecision;
@@ -151,6 +158,26 @@ function validApproval(value: unknown): boolean {
   );
 }
 
+function validPendingMutation(
+  value: unknown,
+): value is GovernancePendingMutation {
+  if (!isObject(value)) return false;
+  return (
+    hasOnlyKeys(value, [
+      "id",
+      "requestId",
+      "toolCallId",
+      "target",
+      "startedAt",
+    ]) &&
+    nonBlank(value.id) &&
+    nonBlank(value.requestId) &&
+    nonBlank(value.toolCallId) &&
+    nonBlank(value.target) &&
+    validDate(value.startedAt)
+  );
+}
+
 function validateState(value: unknown): GovernanceWorkState {
   if (!isObject(value)) {
     throw new GovernanceStoreError(
@@ -161,6 +188,7 @@ function validateState(value: unknown): GovernanceWorkState {
   const repository = value.repository;
   const approvals = value.approvals;
   const evidence = value.evidence;
+  const pendingMutations = value.pendingMutations;
   if (
     !hasOnlyKeys(value, [
       "schemaVersion",
@@ -175,6 +203,7 @@ function validateState(value: unknown): GovernanceWorkState {
       "executionProfile",
       "approvals",
       "evidence",
+      "pendingMutations",
       "lifecycle",
     ]) ||
     value.schemaVersion !== 1 ||
@@ -210,6 +239,11 @@ function validateState(value: unknown): GovernanceWorkState {
     !approvals.every(validApproval) ||
     !Array.isArray(evidence) ||
     !evidence.every(validEvidence) ||
+    !(
+      pendingMutations === undefined ||
+      (Array.isArray(pendingMutations) &&
+        pendingMutations.every(validPendingMutation))
+    ) ||
     typeof value.lifecycle !== "string" ||
     !WORK_LIFECYCLES.includes(
       value.lifecycle as (typeof WORK_LIFECYCLES)[number],
@@ -222,9 +256,13 @@ function validateState(value: unknown): GovernanceWorkState {
   }
   const evidenceIds = evidence.map((entry) => entry.id);
   const approvalIds = approvals.map((entry) => (entry as { id: string }).id);
+  const pendingIds = (pendingMutations ?? []).map(
+    (entry) => (entry as GovernancePendingMutation).id,
+  );
   if (
     new Set(evidenceIds).size !== evidenceIds.length ||
-    new Set(approvalIds).size !== approvalIds.length
+    new Set(approvalIds).size !== approvalIds.length ||
+    new Set(pendingIds).size !== pendingIds.length
   ) {
     throw new GovernanceStoreError(
       "Governance state contains duplicate record IDs.",
@@ -299,25 +337,23 @@ export async function readGovernanceState(
   }
 }
 
-/** Returns a fail-closed mutation denial when authoritative state exists. */
-export async function governanceMutationBlockReason(
-  rootDir: string,
-  workId: string,
-): Promise<string | null> {
-  let state: GovernanceWorkState;
-  try {
-    state = await readGovernanceState(rootDir, workId);
-  } catch (error) {
-    if (error instanceof GovernanceStoreError && error.code === "missing") {
-      // Existing generated work predates governance initialization. Remaining
-      // legacy guard migration is a later slice; do not silently reinterpret it
-      // here.
-      return null;
-    }
-    throw error;
+function latestEvidence(
+  state: GovernanceWorkState,
+  kind: GovernanceEvidence["kind"],
+): { entry: GovernanceEvidence; index: number } | null {
+  for (let index = state.evidence.length - 1; index >= 0; index -= 1) {
+    const entry = state.evidence[index];
+    if (entry?.kind === kind) return { entry, index };
   }
+  return null;
+}
+
+export function governanceActionBlockReason(
+  state: GovernanceWorkState,
+  action: GovernanceGuardAction,
+): string | null {
   if (state.lifecycle !== "active") {
-    return `Ged work ${workId} has lifecycle ${state.lifecycle}; only active work can authorize mutation.`;
+    return `Ged work ${state.workId} has lifecycle ${state.lifecycle}; only active work can authorize mutation.`;
   }
   if (
     state.evidence.some(
@@ -325,9 +361,60 @@ export async function governanceMutationBlockReason(
         entry.kind === "migration-required" && entry.outcome === "failed",
     )
   ) {
-    return `Ged work ${workId} requires legacy migration review and cannot authorize mutation.`;
+    return `Ged work ${state.workId} requires legacy migration review and cannot authorize mutation.`;
+  }
+  if (state.decision.mode === "read-only") {
+    return `Ged work ${state.workId} is read-only and cannot authorize mutation.`;
+  }
+  if (state.decision.requiresDecision) {
+    return `Ged work ${state.workId} still requires a user-owned decision before mutation.`;
+  }
+  const latestPlan = latestEvidence(state, "plan");
+  const planSatisfied = latestPlan?.entry.outcome === "satisfied";
+  if (
+    state.decision.mode === "planned-change" &&
+    action !== "metadata-mutation" &&
+    !planSatisfied
+  ) {
+    return `Ged work ${state.workId} is planned-change work without satisfied plan evidence.`;
+  }
+  if (action === "commit") {
+    if ((state.pendingMutations?.length ?? 0) > 0) {
+      return `Ged work ${state.workId} has a source mutation pending durable completion evidence.`;
+    }
+    let latestImplementation = -1;
+    state.evidence.forEach((entry, index) => {
+      if (entry.kind === "implementation") latestImplementation = index;
+    });
+    const verification = latestEvidence(state, "verification");
+    if (
+      !verification ||
+      verification.index <= latestImplementation ||
+      verification.entry.outcome !== "satisfied"
+    ) {
+      return `Ged work ${state.workId} has no satisfied verification evidence newer than its latest implementation evidence.`;
+    }
   }
   return null;
+}
+
+/** Returns a fail-closed denial from authoritative state. */
+export async function governanceMutationBlockReason(
+  rootDir: string,
+  workId: string,
+  action: GovernanceGuardAction = "source-mutation",
+): Promise<string | null> {
+  try {
+    return governanceActionBlockReason(
+      await readGovernanceState(rootDir, workId),
+      action,
+    );
+  } catch (error) {
+    if (error instanceof GovernanceStoreError && error.code === "missing") {
+      return `Ged work ${workId} has no authoritative governance state.`;
+    }
+    throw error;
+  }
 }
 
 async function writeStructuredState(
@@ -369,6 +456,7 @@ Next Step: Follow the authoritative governance decision and current slice.
 - Execution profile: ${state.executionProfile}
 - Evidence records: ${state.evidence.length}
 - Approval records: ${state.approvals.length}
+- Pending mutations: ${state.pendingMutations?.length ?? 0}
 `;
 }
 
@@ -435,6 +523,7 @@ export async function initializeGovernanceState(
       executionProfile: input.executionProfile,
       approvals: [],
       evidence: input.evidence ?? [],
+      pendingMutations: [],
       lifecycle: input.lifecycle ?? "active",
     });
     await writeStructuredState(rootDir, workId, state);
@@ -509,4 +598,223 @@ export async function appendGovernanceEvidence(
     await writeProjectionFromState(rootDir, next);
     return next;
   });
+}
+
+async function appendEvidenceWithPolicy(
+  rootDir: string,
+  workId: string,
+  record: GovernanceEvidence,
+  policy: (current: GovernanceWorkState) => string | null,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    const blocked = policy(current);
+    if (blocked) {
+      throw new GovernanceStoreError(blocked, "governance-blocked");
+    }
+    if (current.evidence.some((entry) => entry.id === record.id)) {
+      throw new GovernanceStoreError(
+        `Evidence ID ${record.id} already exists.`,
+        "duplicate-evidence",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      evidence: [...current.evidence, record],
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function beginGovernanceMutation(
+  rootDir: string,
+  workId: string,
+  pending: GovernancePendingMutation,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  if (!validPendingMutation(pending)) {
+    throw new GovernanceStoreError(
+      "Pending mutation has an invalid shape.",
+      "invalid-state",
+    );
+  }
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    const blocked = governanceActionBlockReason(current, "source-mutation");
+    if (blocked) {
+      throw new GovernanceStoreError(blocked, "governance-blocked");
+    }
+    if (
+      (current.pendingMutations ?? []).some(
+        (entry) =>
+          entry.id === pending.id ||
+          (entry.requestId === pending.requestId &&
+            entry.toolCallId === pending.toolCallId),
+      )
+    ) {
+      throw new GovernanceStoreError(
+        `Pending mutation ${pending.id} already exists.`,
+        "invalid-state",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      pendingMutations: [...(current.pendingMutations ?? []), pending],
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function completeGovernanceMutation(
+  rootDir: string,
+  workId: string,
+  pendingId: string,
+  record: GovernanceEvidence,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  if (
+    !nonBlank(pendingId) ||
+    record.kind !== "implementation" ||
+    record.outcome !== "observed" ||
+    !validEvidence(record)
+  ) {
+    throw new GovernanceStoreError(
+      "Mutation completion requires a pending ID and observed implementation evidence.",
+      "invalid-state",
+    );
+  }
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    if (
+      !(current.pendingMutations ?? []).some((entry) => entry.id === pendingId)
+    ) {
+      throw new GovernanceStoreError(
+        `Pending mutation ${pendingId} does not exist.`,
+        "invalid-state",
+      );
+    }
+    if (current.evidence.some((entry) => entry.id === record.id)) {
+      throw new GovernanceStoreError(
+        `Evidence ID ${record.id} already exists.`,
+        "duplicate-evidence",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      pendingMutations: (current.pendingMutations ?? []).filter(
+        (entry) => entry.id !== pendingId,
+      ),
+      evidence: [...current.evidence, record],
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function clearGovernanceMutation(
+  rootDir: string,
+  workId: string,
+  pendingId: string,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  const paths = gedPathsForWorkId(rootDir, workId);
+  return withProcessQueue(paths.governancePath, async () => {
+    const current = await readGovernanceState(rootDir, workId);
+    if (
+      !(current.pendingMutations ?? []).some((entry) => entry.id === pendingId)
+    ) {
+      throw new GovernanceStoreError(
+        `Pending mutation ${pendingId} does not exist.`,
+        "invalid-state",
+      );
+    }
+    const next = validateState({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: now.toISOString(),
+      pendingMutations: (current.pendingMutations ?? []).filter(
+        (entry) => entry.id !== pendingId,
+      ),
+    });
+    await writeStructuredState(rootDir, workId, next);
+    await writeProjectionFromState(rootDir, next);
+    return next;
+  });
+}
+
+export async function recordGovernanceImplementation(
+  rootDir: string,
+  workId: string,
+  record: GovernanceEvidence,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  if (record.kind !== "implementation" || record.outcome !== "observed") {
+    throw new GovernanceStoreError(
+      "Implementation transitions require observed implementation evidence.",
+      "invalid-state",
+    );
+  }
+  return appendEvidenceWithPolicy(
+    rootDir,
+    workId,
+    record,
+    (current) => governanceActionBlockReason(current, "source-mutation"),
+    now,
+  );
+}
+
+export async function recordSatisfiedGovernanceEvidence(
+  rootDir: string,
+  workId: string,
+  record: GovernanceEvidence,
+  now = new Date(),
+): Promise<GovernanceWorkState> {
+  if (
+    (record.kind !== "plan" && record.kind !== "verification") ||
+    record.outcome !== "satisfied"
+  ) {
+    throw new GovernanceStoreError(
+      "Governance milestones require satisfied plan or verification evidence.",
+      "invalid-state",
+    );
+  }
+  return appendEvidenceWithPolicy(
+    rootDir,
+    workId,
+    record,
+    (current) => {
+      const base = governanceActionBlockReason(current, "metadata-mutation");
+      if (base) return base;
+      if (
+        record.kind === "plan" &&
+        current.decision.mode !== "planned-change"
+      ) {
+        return "Plan evidence is only valid for planned-change work.";
+      }
+      if (
+        record.kind === "verification" &&
+        current.decision.mode === "planned-change" &&
+        latestEvidence(current, "plan")?.entry.outcome !== "satisfied"
+      ) {
+        return "Planned-change verification requires satisfied plan evidence first.";
+      }
+      return null;
+    },
+    now,
+  );
 }

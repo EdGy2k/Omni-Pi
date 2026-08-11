@@ -1,223 +1,147 @@
-# Main-Owned Intelligence Orchestration
+# Governance-First Adaptive Orchestration
+
+Status: approved target; governance foundation implemented through Plan 001
+slice 5. Content-bound enforcement and adaptive staffing remain ordered follow-up
+work in Plans 002 and 003.
 
 ## Purpose
 
-GedPi uses `pi-subagents` and `pi-intercom` to delegate context gathering, planning drafts, critique, verification, and optional implementation slices while keeping the main GedPi brain as the user-facing decision owner.
+GedPi should scale ceremony and staffing independently. A request's risk decides
+what evidence must exist; available assistants decide only how the work is
+performed. The coordinator remains the only user-facing brain and final decision
+owner in every configuration.
 
-The rule to preserve is:
+## Invariants
 
-> Context and implementation slices can be delegated. Scope decisions, final `.ged` artifacts, verification adjudication, commits, pushes, and PR decisions stay with the primary Ged brain.
+1. Governance works identically with optional agents enabled or disabled.
+2. A role name, launch, completion event, disabled-role fallback, Markdown file,
+   branch name, or successful process is never authorization.
+3. Every mutating request explicitly opens or continues one immutable work ID.
+4. `.ged/runtime/<work-id>/governance.json` is the sole machine authority.
+5. The coordinator owns scope, risk, plan acceptance, evidence adjudication,
+   commits, pushes, and lifecycle transitions.
+6. One writer owns a checkout/worktree. Parallel writers require intentionally
+   isolated worktrees.
+7. Publication is user-owned. GedPi never pushes without an explicit request.
 
-## Current decisions
+## Governance plane
 
-- GedPi bundles `pi-subagents` and `pi-intercom` instead of the legacy `@tintinweb/pi-subagents` package.
-- Generic/default agents bundled by `pi-subagents` are hidden by default via `subagents.disableBuiltins: true`; Ged exposes its own roles.
-- Main agent clarifies requirements and owns user-facing decisions.
-- `ged-explorer` performs read-only code/context and skill-fit reconnaissance.
-- `ged-planner` authors draft `SPEC.md`, `TASKS.md`, and `TESTS.md` content from clarified requirements and explorer findings.
-- Main agent accepts, edits, or rejects planner drafts and writes final `.ged` artifacts.
-- `ged-plan-reviewer` provides optional/risk-based critique after the main agent has accepted/written the draft plan.
-- `ged-verifier` performs clean-context review of diffs and verification evidence before commits.
-- `ged-worker` is optional and disabled by default. When enabled, it may implement bounded approved slices, including parallel disjoint slices, only after the main agent performs a worker-suitability check. It must not commit, push, rebase, merge, make product decisions, or replace verifier/main acceptance.
-- Intern/ops agent remains deferred/absent.
-- `contact_supervisor` is for blocked decisions or progress-changing discoveries,
-  not routine completion handoffs. pi-subagents owns the native spawned-child
-  channel; external pi-intercom remains available for independent sessions.
+### Work modes
 
-## Settings model
+- **read-only**: inspection, explanation, research, or reporting. It opens no
+  mutating work and authorizes no repository mutation.
+- **direct-change**: mutation is requested, ambiguity is resolved, risk is not
+  high, and the change is clear, bounded, reversible, and deterministically
+  checkable.
+- **planned-change**: the user requests planning, risk is high, a user-owned
+  decision is unresolved, the coordinator escalates, or any direct-change
+  condition is missing.
 
-Agent settings live outside `.ged/` because `.ged/` is durable workflow memory, not runtime/model configuration.
+The resolver applies precedence rather than a heuristic score:
 
-Use:
+1. no mutation intent → read-only;
+2. unresolved user decision → planned-change with mutation still blocked;
+3. explicit planned minimum, high risk, or coordinator escalation →
+   planned-change;
+4. every direct-change eligibility fact true → direct-change;
+5. otherwise → planned-change.
 
-- global settings: `~/.gedoc/settings.json`;
-- project override: `.gedoc/settings.json`, gitignored;
-- runtime Pi suppression: `.pi/settings.json` with `subagents.disableBuiltins: true`.
+File count and staffing are not mode authority.
 
-Representative shape:
+### Task-scoped identity
 
-```json
-{
-  "agents": {
-    "enabled": true,
-    "intercomBridge": true,
-    "critiqueMode": "risk-based",
-    "defaultModel": {
-      "model": "provider/model",
-      "thinking": "medium",
-      "fallback": ["provider/fallback"]
-    },
-    "roles": {
-      "ged-explorer": { "enabled": true },
-      "ged-planner": { "enabled": true, "thinking": "high" },
-      "ged-plan-reviewer": { "enabled": true },
-      "ged-verifier": { "enabled": true },
-      "ged-worker": {
-        "enabled": false,
-        "maxParallel": 2,
-        "preferWorktreeIsolation": false
-      }
-    }
-  }
-}
-```
+Work IDs are generated and immutable. Branch and HEAD are diagnostic metadata
+only. Session-scoped pointers live under
+`.ged/runtime/active-work/<session-key>.json` and bind a work ID to one fresh
+agent-request nonce. Every new mutating request must call `ged_work open`, or
+`ged_work continue` when the user is explicitly continuing the exact work ID.
 
-Compatibility requirements:
+Open receives structured minimum mode, ambiguity, risk, direct-change facts,
+and an optional execution profile. Governance is initialized before the new
+work item is bound to the request. Continue fails closed for absent, malformed,
+read-only, unresolved, paused, blocked, completed, cancelled, or imported
+non-selectable state.
 
-- `agents.enabled` defaults to `false`.
-- Missing model settings inherit the invoking/orchestrator model.
-- Existing legacy `agents.models` string/object entries remain readable and are merged into role settings.
-- Project settings override global settings.
-- Unknown roles are ignored/cleaned; `ged-worker` is now a valid optional role.
-- Generated `pi-subagents` frontmatter uses the current package contract: required `name`/`description`, plus `fallbackModels`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, and `completionGuard`.
+### Authoritative state
 
-## Runtime roles
+`governance.json` stores schema version, work identity, revision, lifecycle,
+mode decision, execution profile, append-only evidence, approvals, and optional
+current slice. Accepted changes use serialized compare-and-swap semantics.
+Markdown status and handoff files are regenerable projections only.
 
-### `ged-explorer`
+Legacy `checkpoints.json` files remain parser/migration inputs while
+compatibility is needed. Migration preserves byte-exact ignored backups and may
+import one unambiguous candidate as paused review data. Legacy role evidence is
+never copied into authorizing fields or selected as current work.
 
-Read-only repo and skill-fit discovery. It may read/search files, inspect docs/tests/standards/skills, run safe discovery commands, and report evidence. It must not edit, install skills, write `.ged` plans, commit, push, or make scope decisions.
+### Role-neutral transitions
 
-### `ged-planner`
+`ged_governance accept-plan` appends satisfied plan evidence after the
+coordinator accepts the canonical planned artifacts and any configured human
+review is complete. Planned-change source mutation requires the latest plan
+evidence to be satisfied.
 
-Planning author. It drafts plan artifacts from clarified requirements and explorer findings. It must refuse with `outcome: refused-needs-clarification` when the dispatch lacks enough goal, audience, scope, constraints, risks, or acceptance criteria. The main brain writes final `.ged` files.
+`ged_governance record-verification` appends satisfied verification evidence
+after checks pass and findings are adjudicated. A commit requires satisfied
+verification evidence later in append order than the latest successful
+implementation evidence. A later failed plan or verification record supersedes
+an earlier satisfied record of the same kind.
 
-### `ged-plan-reviewer`
+Successful Pi `write`/`edit` calls append runtime-owned implementation evidence
+after tool completion. Calls enter authoritative durable pending state before
+execution; failed results clear it, while a pending call blocks commit even
+after runtime restart. Assistant results can inform the coordinator but never
+write these transitions automatically.
 
-Risk reviewer for accepted planner drafts. It separates blockers from non-blocking suggestions, flags worker-safety risks, and does not implement or rewrite scope on its own.
+A successful commit is a milestone. It does not consume plan evidence or close
+current or legacy work.
 
-### `ged-verifier`
+### Protected Ged paths
 
-Clean-context review and verification support. It reports findings with evidence, confidence, suggested fix, and commit-blocking status. The main brain adjudicates, fixes accepted findings directly by default, and reruns verification.
-Verifier dispatches must use a strict structured output schema with an `outcome`
-of `clean` or `findings` and a `findings` array. Only `clean` with an empty array
-is auto-recorded as a satisfied verifier checkpoint; process success or an
-incomplete/rejected acceptance ledger is not enough.
+The runtime resolves existing targets and their nearest existing ancestors,
+including symlinks, rather than trusting a `.ged` substring:
 
-### `ged-worker`
+- current `SPEC.md`, `TASKS.md`, `TESTS.md`, `NOTES.md`, durable root memory,
+  and project skills are metadata mutations;
+- governance state, session pointers, migration records, `META.json`, other
+  work items, and unknown `.ged` paths are runtime-owned and protected;
+- paths outside `.ged` are source mutations for the current guard boundary.
 
-Optional implementation worker, disabled by default and generated only when enabled. Use it only for approved, bounded, low-ambiguity, low-risk, disjoint slices with a clear verification path. Before delegating, the main agent checks whether the slice is mechanically implementable and unlikely to require product, security, architecture, migration, API, or UX judgment. If a slice is too difficult, ambiguous, risky, coupled, hard to verify, or judgment-heavy, the main agent implements it directly. It may edit implementation files but must not run git commit/push/rebase/merge or make product/scope decisions. Parallel workers should target separate slices or file areas; optional worktree isolation may be preferred for safer parallelism.
+## Current enforcement boundary
 
-## Workflow integration
+The current runtime intercepts Pi `write`, `edit`, and detected `git commit`
+commands. This is an accident-prevention and evidence boundary, not an OS
+sandbox. Plan 002 adds conservative mutation detection for broader shell and
+unknown tools, canonical content fingerprints, staged-diff verification, and
+approval invalidation when governed bytes change.
 
-When Ged mode is active:
+## Execution staffing plane
 
-1. Classify the task.
-2. Clarify with the user unless the request is already concrete.
-3. Use `ged-explorer` when enabled; otherwise the main brain performs and records fallback discovery.
-4. Main brain adjudicates skill findings and performs any mutating project-skill install/create actions.
-5. Use `ged-planner` to draft the implementation plan when enabled; otherwise main authors it.
-6. Main brain accepts/edits/rejects the draft, writes final `.ged` plan artifacts, and records `planAcceptance` with accepted plan paths.
-7. Run configured human/Glimpse plan review on the written draft.
-8. Run `ged-plan-reviewer` according to critique mode: `off`, `risk-based`, or `always`.
-9. Implement one bounded slice at a time. When `ged-worker` is enabled, perform a worker-suitability check before each delegation and keep unsuitable slices in the main agent.
-10. Run planned checks.
-11. Use `ged-verifier` when enabled, or explicit main-agent fallback verification when disabled.
-12. Main brain adjudicates findings, fixes accepted issues directly by default, reruns verification, records progress, and commits. Do not re-invoke `ged-worker` for verifier fixes unless the fix is a rare new isolated mechanical slice with a clear verification path.
+Staffing is capacity, not governance. Plan 003 will select among:
 
-## Mandatory checkpoints
+- **solo**: coordinator executes directly;
+- **assisted**: one focused scout, reviewer, or verifier;
+- **coordinated**: several disjoint evidence producers and/or isolated workers;
+- **high-stakes**: stronger independent review and stricter acceptance.
 
-For non-trivial changes with agents enabled:
+Signals include decomposability, context spread, difficulty, uncertainty,
+parallelism value, review value, and budget. Staffing can escalate or shrink
+without changing work mode. A planned-change can remain solo; a read-only
+request can use several scouts.
 
-- classification and clarification/sufficiency are required before planning;
-- `ged-explorer` or a role-disabled fallback is required before source inspection/planning;
-- `ged-planner` draft plus main accepted/written plan recorded as `planAcceptance`, or planner-disabled fallback plan plus `planAcceptance`, is required before source edits;
-- `ged-verifier` or verifier-disabled fallback verification is required before meaningful commits;
-- worker completion never satisfies verifier/commit requirements;
-- main-agent direct fixes after verifier findings still require rerunning verification before commit.
+Optional assistants may inspect, draft, critique, implement bounded isolated
+slices, or verify. The coordinator validates their outputs and records accepted
+evidence. Native child-supervisor messaging handles parent/child coordination.
+`pi-intercom` is reserved for explicit dependencies between independent
+sessions, not routine completion handoffs.
 
-Worker completions are retained as non-authorizing `workerRuns` audit metadata so multiple disjoint worker slices can be reconciled without overwriting one checkpoint slot.
+## Durable memory
 
-Checkpoint recording should use successful `subagent` foreground results and `subagent:async-complete` events. Launch alone does not complete a checkpoint.
+- Root `.ged/*.md` files contain compact current project truth.
+- `.ged/work/<work-id>/` contains current task artifacts.
+- `.ged/runtime/<work-id>/governance.json` contains authoritative machine state.
+- Runtime Markdown is projection/handoff material.
+- `.pi/` contains ignored acceleration caches such as the repo map.
 
-## `/ged-agents` setup command
-
-In interactive Pi sessions, bare `/ged-agents` opens the comprehensive status/configuration menu. `/ged-agents status` remains the text-only status view, and `/ged-agents setup` / `/ged-agents setup advanced` are compatibility aliases for the same menu. In non-UI sessions, `/ged-agents` keeps returning text status and `/ged-agents setup` returns copy/paste setup commands.
-
-The setup/status UI should show:
-
-- effective `agents.enabled` state;
-- global and project settings paths;
-- intercom bridge state;
-- critique mode;
-- per-role enabled state, model, thinking level, and fallback models, including fallback ordering in headless command mode;
-- worker `maxParallel` and worktree preference;
-- default builtin suppression state.
-
-Guided setup should use Pi's runtime model registry for primary and fallback model selection and avoid invented model IDs. Setting a model should also prompt for the role/default thinking level and then offer to add one or more ordered fallback models. Fallbacks remain a flat ordered model list and use the role/default thinking setting rather than unsupported per-fallback thinking.
-
-## Tests to keep current
-
-- Dependency/package tests: `pi-subagents` and `pi-intercom` are pinned; legacy `@tintinweb/pi-subagents` is absent.
-- Runtime path tests: configured extension/skill paths exist.
-- Default suppression tests: `subagents.disableBuiltins: true` is written/preserved and generic builtins are hidden.
-- Settings merge/migration tests: global/project, legacy `models`, role settings, fallback models, thinking levels, critique mode, intercom bridge, and worker settings.
-- Agent generation tests: current `pi-subagents` frontmatter names are emitted and worker is absent until enabled.
-- Orchestration tests: planner-authored draft flow, disabled-role fallback, intercom guidance, worker guardrails, and verifier/commit behavior.
-
-## Success criteria
-
-- GedPi exposes Ged-specific roles by default, not generic bundled subagents.
-- Planner intelligence authors draft plans while the main brain owns final artifacts.
-- Optional worker parallelism is available only when explicitly enabled and documented.
-- Subagent/worker results improve throughput without weakening main-agent acceptance, verification, or commit ownership.
-
-## Worker acceptance contracts
-
-When `ged-worker` is explicitly enabled and a slice passes worker-suitability, the main brain should prefer a structured pi-subagents `acceptance` contract instead of placing all done-criteria in prose. Keep contracts lightweight and scoped to the assigned slice; they help the worker self-review and report evidence, but they do not replace main-agent acceptance or `ged-verifier` review.
-
-Example worker handoff shape:
-
-```ts
-subagent({
-  workflowScript: `return runs.run("T03", {
-    agent: "ged-worker",
-    task: "Implement only approved slice T03 from .ged/work/<work-id>/TASKS.md.",
-    acceptance: {
-      level: "verified",
-      criteria: [
-        { id: "slice", must: "Implement only the assigned T03 scope" },
-        { id: "tests", must: "Run the focused verification listed for T03" }
-      ],
-      evidence: ["changed-files", "commands-run", "diff-summary", "residual-risks"],
-      verify: [
-        { id: "focused", command: "npm test -- tests/foo.test.ts", timeoutMs: 120000 }
-      ],
-      stopRules: [
-        "Stop if scope expands beyond T03",
-        "Stop if product/API/security judgment is needed"
-      ]
-    }
-  })`,
-  async: false,
-  turnBudget: { maxTurns: 8, graceTurns: 2 },
-  timeoutMs: 600000
-})
-```
-
-The current public execution surface is `workflowScript` with stable-key
-`runs.run`/`runs.all` calls. Acceptance supports `level`, `criteria`, `evidence`,
-`verify`, optional `review`, and `stopRules`. Turn limits belong in the separate
-top-level `turnBudget`; wall-clock limits use `timeoutMs`/`maxRuntimeMs`.
-Top-level workflows now start asynchronously by default. Mandatory checkpoint
-runs should pass `async: false`, or the coordinator must call `subagent_wait` and
-consume terminal `details.completions` before continuing.
-
-## Deferred orchestration roadmap from Pi 0.78 / pi-subagents 0.28
-
-These are design targets, not implemented runtime behavior yet. Keep checkpoint compatibility in mind before changing `.ged` schemas.
-
-### Structured verifier and checkpoint evidence
-
-Future verifier and worker records can store compact metadata such as `findingCount`, `blocksCommit`, `acceptanceStatus`, `acceptanceReportPath`, `timedOut`, `resourceLimitExceeded`, and completed explorer scopes. Full reports should stay in `.pi/` artifacts; `.ged/runtime/*/checkpoints.json` should store only durable audit pointers and guard-relevant facts.
-
-### Structured planner and explorer outputs
-
-`pi-subagents` supports `outputSchema` and named outputs. GedPi should start with structured `ged-planner` drafts because SPEC/TASKS/TESTS naturally map to schema fields. Structured explorer output should follow once multi-explorer merging is designed.
-
-### Parallel explorer agents and dynamic fanout
-
-Exploration is read-only and often parallelizable. A safe first phase is static parallel explorers with disjoint prompts, for example UI/runtime, checkpoint/schema, and docs/tests scopes. The main brain must synthesize all findings before planning. Later phases can add scoped explorer checkpoint metadata and eventually dynamic fanout (`expand`/`parallel`/`collect`) from a structured scope-planning step. Do not let one completed explorer clear source-inspection safety for scopes that were not explored.
-
-### Prompt-context dedupe
-
-Pi 0.78 exposes `ctx.getSystemPromptOptions()` for extension command contexts. Before relying on it in agent lifecycle hooks, verify API availability in the relevant context. The goal is to reduce duplicated Ged/Pi context and tailor prompt suffixes to active tools, skills, and context files without weakening mandatory workflow instructions.
+Current-state documents should be edited in place. Historical narrative belongs
+in Git history, release notes, archived plans, or explicit decision records.

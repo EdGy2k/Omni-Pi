@@ -1034,14 +1034,11 @@ export function createGedCommands(): AppCommandDefinition[] {
     {
       name: "grill-me",
       description:
-        "Clarify ambiguous non-trivial tasks one question at a time before planning",
+        "Clarify a genuine unresolved user-owned decision one question at a time",
       async execute() {
-        return `Choose the correct clarification declaration for the current non-trivial request:
+        return `Ask exactly one concise unresolved question and include a recommended answer or default assumption. Wait for the user's answer before continuing.
 
-- \`grill-me: needed\` — start a clarification session. Ask exactly one unresolved question, include \`Recommended answer:\` or \`Default assumption:\`, and wait for the user's answer before continuing.
-- \`grill-me: skipped; reason: <why sufficient>\` — use only when the request is already sufficient, then synthesize goal, users/audience, scope, constraints, and success criteria.
-
-Use \`grill-with-docs\` instead when clarification should also update domain language, CONTEXT.md, .ged/GLOSSARY.md, or ADR-worthy decisions. Do not implement during grilling.`;
+If the request is already sufficient, summarize goal, users/audience, scope, constraints, and success criteria naturally instead of emitting a special declaration. Use grill-with-docs when clarification should also update domain language, CONTEXT.md, glossary, or ADR-worthy decisions. Do not implement during grilling, and do not open mutating work while a user-owned decision remains unresolved.`;
       },
     },
     {

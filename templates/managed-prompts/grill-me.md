@@ -1,14 +1,14 @@
 ---
-description: Clarify ambiguous non-trivial tasks one question at a time before planning
+description: Clarify genuine user-owned decisions one question at a time
 thinking: high
 ---
 
 Start a GedPi grill-me clarification session for the current request.
 
-First declare one of these exact forms:
-
-- `grill-me: needed` — then ask exactly one unresolved question and include `Recommended answer:` or `Default assumption:`.
-- `grill-me: skipped; reason: <why the request is already sufficient>` — then synthesize goal, users/audience, scope, constraints, and success criteria.
+If a user-owned decision is unresolved, ask exactly one concise question and
+include a recommended answer or default assumption. If the request is already
+sufficient, summarize goal, users/audience, scope, constraints, and success
+criteria naturally without emitting a special declaration.
 
 Rules:
 
@@ -18,14 +18,6 @@ Rules:
 - For terminology, glossary, domain-model, CONTEXT.md, or ADR-heavy clarification, use `grill-with-docs` instead of plain `grill-me`.
 - Do not implement during grilling.
 
-When clarification is done or explicitly skipped as sufficient, record an auditable clarification checkpoint in `.ged/runtime/<work-id>/checkpoints.json` before planning non-trivial work. For a skip, use:
-
-```json
-"clarification": {
-  "status": "skipped",
-  "source": "manual",
-  "timestamp": "<ISO timestamp>",
-  "sufficiency": "sufficient-from-request",
-  "skipReason": "<why no question was needed>"
-}
-```
+Do not open mutating work while ambiguity remains `decision-needed`. Once the
+answer is sufficient, open work with `ambiguity: "sufficient"`; governance is
+recorded by the runtime rather than by editing checkpoint files.

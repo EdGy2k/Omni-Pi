@@ -1,11 +1,13 @@
 ---
 name: grill-me
-description: Use before planning or implementing a non-trivial change when the request is not fully clear. Clarifies goals, desired behavior, constraints, edge cases, non-goals, tests, rollout, and success criteria by asking one concise question at a time with a recommended answer/default.
+description: Use before opening mutating work when the request has a genuine unresolved user-owned decision. Clarifies goals, desired behavior, constraints, edge cases, non-goals, tests, rollout, and success criteria one concise question at a time.
 ---
 
 # grill-me
 
-Use this skill after task classification for non-trivial work **only when the request is not already fully clear**. If the user's request is concrete enough to plan safely without guessing, skip grilling and proceed to skill-fit resolution (via `ged-explorer` when subagents are enabled, or in the main brain in solo mode).
+Use this skill **only when the request is not already fully clear**. If the
+request is concrete enough to proceed safely, summarize it naturally and move
+to skill-fit. Do not emit a required visible declaration.
 
 ## Goal
 

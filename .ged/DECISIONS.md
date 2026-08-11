@@ -58,3 +58,15 @@
     failed `migration-required` evidence. Ambiguous, corrupt, unsupported, or
     inactive records are backed up but never imported; sources are never
     moved, rewritten, or trusted as approval.
+
+- Date: 2026-08-11
+  - Decision: Resolve mutation governance when `ged_work` opens a task and
+    record accepted plan and verification evidence through a role-neutral
+    runtime transition.
+  - Why: Optional subagents may produce evidence but cannot own authorization;
+    solo and staffed execution must satisfy the same state contract.
+  - Impact: Hard guards read only authoritative governance plus current-request
+    work binding. Legacy role checkpoints no longer gate reads, writes, or
+    commits, and subagent completion alone cannot authorize mutation. Writes
+    enter durable pending state before execution, so failed evidence persistence
+    or runtime restart cannot revive stale verification.

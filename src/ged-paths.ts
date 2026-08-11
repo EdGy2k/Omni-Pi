@@ -528,6 +528,7 @@ export async function openGedWork(
   rootDir: string,
   identity: WorkRequestIdentity,
   summary: string,
+  options: { bindRequest?: boolean } = {},
 ): Promise<OpenedGedWork> {
   validateRequestIdentity(identity);
   const pointerPath = activeWorkPointerPath(rootDir, identity.sessionId);
@@ -541,7 +542,9 @@ export async function openGedWork(
       selectedAt: new Date().toISOString(),
       requestId: identity.requestId,
     };
-    await writePointer(rootDir, pointer);
+    if (options.bindRequest !== false) {
+      await writePointer(rootDir, pointer);
+    }
     return { workId: meta.workId, paths, pointer, meta };
   });
 }
@@ -550,6 +553,15 @@ export async function continueGedWork(
   rootDir: string,
   identity: WorkRequestIdentity,
   workId: string,
+): Promise<OpenedGedWork> {
+  return bindGedWork(rootDir, identity, workId, "continue");
+}
+
+export async function bindGedWork(
+  rootDir: string,
+  identity: WorkRequestIdentity,
+  workId: string,
+  operation: "open" | "continue",
 ): Promise<OpenedGedWork> {
   validateRequestIdentity(identity);
   requireGeneratedWorkId(workId);
@@ -562,7 +574,7 @@ export async function continueGedWork(
       schemaVersion: 1,
       sessionId: identity.sessionId,
       workId,
-      operation: "continue",
+      operation,
       selectedAt: new Date().toISOString(),
       requestId: identity.requestId,
     };

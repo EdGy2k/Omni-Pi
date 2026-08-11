@@ -3,10 +3,13 @@
 ## Current components
 
 - `extensions/ged-core/`: Pi lifecycle hooks, workflow prompt injection,
-  mutation/commit guards, runtime UI, and project bootstrap.
+  governance runtime registration, runtime UI, and project bootstrap.
 - `src/brain.ts`: main-agent system prompt and durable project context assembly.
-- `src/orchestration.ts` + `src/vendor/shared-checkpoints.js`: current workflow
-  checks and subagent completion projection.
+- `src/governance.ts`, `src/governance-store.ts`, and `src/work-runtime.ts`:
+  authoritative work modes, role-neutral evidence, current-request binding, and
+  mutation/commit guards.
+- `src/orchestration.ts` + `src/vendor/shared-checkpoints.js`: optional staffing
+  prompt plus non-authorizing legacy checkpoint compatibility.
 - `src/agent-settings.ts` + `src/commands.ts`: role/model settings and runtime
   agent generation.
 - `src/workflow.ts`, `src/work.ts`, `src/skills.ts`, `src/templates.ts`: durable

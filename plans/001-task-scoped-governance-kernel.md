@@ -9,7 +9,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — slice 4 verified; guard migration next
+- **Status**: IN PROGRESS — slice 5 verified; explicit lifecycle transitions next
 - **Priority**: P0
 - **Effort**: L
 - **Risk**: HIGH
@@ -44,7 +44,7 @@ repository/worktree identity, branch and base HEAD as metadata, timestamps,
 current slice, governance decision/reason, execution profile, approval/evidence
 slots, lifecycle, and a monotonic revision.
 
-## Current state
+## Baseline state at planning commit
 
 - `src/ged-paths.ts:22-47` derives `workId` solely from branch slug.
 - `src/vendor/shared-checkpoints.js:17-122` defines binary classification and
@@ -162,10 +162,10 @@ summarize naturally. Document governance versus execution as orthogonal planes.
 - [x] Work mode, ambiguity, risk, execution profile, and lifecycle are typed once.
 - [x] Every work item has a unique ID independent of branch.
 - [x] Legacy state is non-authorizing and recoverable.
-- [ ] Governance remains active when subagents are off.
-- [ ] Commits do not implicitly close work.
-- [ ] No exact visible `grill-me:` syntax is required.
-- [ ] Focused and full verification pass; changelog is updated.
+- [x] Governance remains active when subagents are off.
+- [x] Commits do not implicitly close work.
+- [x] No exact visible `grill-me:` syntax is required.
+- [x] Focused and full verification pass; changelog is updated.
 
 ## STOP conditions
 

@@ -28,7 +28,7 @@ export const defaultSkillSignals: SkillSignal[] = [
   {
     label: "grill-me",
     reason:
-      "Clarify ambiguous non-trivial tasks one question at a time before planning.",
+      "Clarify genuine unresolved user-owned decisions one question at a time.",
     policy: "auto-install",
   },
   {

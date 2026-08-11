@@ -15,9 +15,15 @@ This file provides guidance to Codex and other AI agents when working with code 
 
 GedPi is a batteries-included Pi package built around a single conversational brain.
 
-**Agent flow**: GedPi always starts in full workflow mode. One brain clarifies ambiguous requests, writes the spec into `.ged/`, breaks work into bounded slices, implements them, and records verification/results in durable memory. The agent classifies tasks as trivial or non-trivial and adjusts its behavior accordingly — no manual toggle needed.
+**Agent flow**: GedPi's single brain selects `read-only`, `direct-change`, or
+`planned-change` governance from mutation intent, ambiguity, risk, and bounded
+change evidence. Mutating requests explicitly open/continue task-scoped work;
+authoritative governance state, not role invocation, controls mutation.
 
-Future orchestration work should follow `docs/single-writer-intelligence-orchestration.md`: keep the primary Ged brain as the user-facing decision owner, use `pi-subagents` for explorer/planner/plan-reviewer/verifier roles, use `pi-intercom` only for blocked decisions or progress-changing discoveries, and keep `ged-worker` optional/settings-gated behind a main-agent worker-suitability check. Do not expose generic bundled subagent agents by default, and do not reintroduce unstructured writer swarms.
+Execution staffing is orthogonal: keep the primary brain as user-facing decision
+owner, use optional assistants only when useful, keep one writer per
+checkout/worktree, and use `pi-intercom` only for explicit independent-session
+dependencies. Assistant completion is evidence proposal, never authorization.
 
 **Memory**: `.ged/` files hold durable project standards, context, and Ged workflow state — not source code. `.pi/` is Pi-runtime-local state and should stay out of Git.
 
@@ -53,13 +59,22 @@ When changing Ged's workflow, update the durable documentation and generated pro
 - `AGENTS.md` documents the intended workflow for future coding sessions.
 - Keep `.ged/` memory schema changes deliberate and backward-compatible; GedPi is now the canonical implementation.
 
-For non-trivial work, the main agent must run the first clarification/sufficiency pass before planning. Use grill-me in chat when goal, users/audience, scope, constraints, relevant context, risks, tests, or success criteria are unclear. If the request is already clear, synthesize that evidence instead of asking unnecessary questions. With subagents enabled, dispatch `ged-explorer` after clarification to perform read-only skill-fit reconnaissance (inventory/evaluate/search) plus codebase discovery; the main agent then adjudicates findings and performs any mutating project-skill install/create actions. For large reconnaissance, the main agent may run multiple read-only `ged-explorer` agents in parallel on disjoint scopes, then synthesize all findings before planning. The `ged-planner` role now authors the draft SPEC/TASKS/TESTS plan from clarified requirements and explorer findings; the main agent accepts/edits/rejects that draft, writes final `.ged` plan files, and records `planAcceptance` before source edits. Human/Glimpse plan review applies to the accepted/written draft, followed by optional `ged-plan-reviewer` critique according to critique mode. `ged-worker` is disabled by default and should only be enabled for bounded, disjoint, approved implementation slices after a worker-suitability check; if a slice is too difficult, ambiguous, risky, coupled, hard to verify, or judgment-heavy, the main agent implements it directly. Worker handoffs should use explicit pi-subagents `acceptance` contracts when available, with criteria, required evidence, verification commands, and stop rules captured structurally instead of only in prose. Worker completions are `workerRuns` audit metadata and never replace verifier review or main-agent acceptance. After `ged-verifier` reports issues, the main agent fixes accepted findings directly by default and reruns verification rather than re-invoking a worker, except for rare new isolated mechanical slices.
+Ask one concise question only when a user-owned decision remains unresolved;
+otherwise summarize naturally. Read-only work does not open mutating work.
+Mutating work calls `ged_work open` with structured governance evidence.
+Planned-change work writes bounded SPEC/TASKS/TESTS artifacts and records
+accepted-plan evidence with `ged_governance` before source mutation.
+Direct-change work skips plan ceremony. After checks and finding adjudication,
+record current verification evidence before commit. Optional assistants can
+inspect, draft, critique, implement isolated slices, or verify, but the main
+brain accepts evidence and retains all scope/publication authority.
 
 The Ged workflow is always active:
 - lazily initialize or migrate `.ged/` on the first real agent turn
 - discover external standards files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `.cursor/rules/**/*.mdc`, `.cursorrules`, `.windsurf/rules/**`, and `.continue/rules/**`
 - ask the user whether to keep repo-wide standards in Ged's durable config
-- use `ged-explorer` for read-only skill-fit reconnaissance when subagents are enabled, then automatically install matching task skills into `.ged/project-skills/`, create a project skill when none exists, track skill dependencies per task, and remove project-scoped skills once no open task still depends on them
+- run skill-fit for planned work and install/create project skills only for a
+  real reusable capability gap
 - ensure `.pi/` is ignored in `.gitignore` when the project is a Git repo
 
 **Commits**: After completing any task — including individual implementation slices, bug fixes, refactors, or cleanup — create a git commit to snapshot the work. Commit every change you make unless the user explicitly asks not to. Before committing, run the relevant verification for the touched area and fix any failures. Use conventional commit format (`feat:`, `fix:`, `refactor:`, `chore:`, etc.). Never leave completed work uncommitted. Check `git status` after each task; if there are staged or unstaged changes, commit them.

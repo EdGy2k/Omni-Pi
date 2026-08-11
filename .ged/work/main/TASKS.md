@@ -23,7 +23,17 @@
   idempotence, and concurrent callers.
 - [x] Run focused/full checks, independent review, and commit.
 
+## Slice 5 — Staffing-independent governance guards
+
+- [x] Initialize governance from structured `ged_work open` evidence.
+- [x] Add role-neutral plan/verification evidence transitions.
+- [x] Enforce mode, plan, lifecycle, and fresh verification from authoritative
+  state with subagents enabled or disabled.
+- [x] Remove legacy role guards, completion authority, and commit auto-close.
+- [x] Migrate workflow prompts and injected status to governance vocabulary.
+- [x] Cover durable pending writes, protected paths, the solo/staffed governance
+  matrix, regressions, and commit.
+
 ## Later slices
 
-- [ ] Decouple remaining guards from staffing and migrate prompts/status.
-- [ ] Add explicit lifecycle transitions and remove commit auto-close.
+- [ ] Add explicit lifecycle transitions.

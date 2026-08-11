@@ -1094,74 +1094,31 @@ describe("subagent dispatch detection", () => {
 });
 
 describe("orchestration prompt", () => {
-  it("returns empty string when agents disabled", () => {
+  it("keeps governance unchanged when staffing is disabled", () => {
     const result = buildOrchestrationPrompt(false);
-    expect(result).toBe("");
+    expect(result).toContain("Execution staffing (independent of governance)");
+    expect(result).toContain("Subagent staffing is disabled");
+    expect(result).toContain("governance requirements remain identical");
   });
 
-  it("includes main-agent ownership invariant when enabled", () => {
+  it("describes optional capacity without role authority", () => {
     const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("Main-agent ownership invariant");
-    expect(result).toContain("final .ged artifact owner");
-  });
-
-  it("includes task classification instructions", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("TRIVIAL");
-    expect(result).toContain("NON-TRIVIAL");
-    expect(result).toContain("execute directly and skip the subagent workflow");
-  });
-
-  it("names all mandatory subagent checkpoints and explorer skill-fit reconnaissance", () => {
-    const result = buildOrchestrationPrompt(true);
+    expect(result).toContain("user-facing decision");
+    expect(result).toContain("read-only, direct-change, or planned-change");
+    expect(result).toContain("Optional assistants are available");
+    expect(result).toContain("No assistant name, launch, completion");
+    expect(result).toContain("ged_governance");
     expect(result).toContain(
-      "ged-explorer skill-fit reconnaissance + discovery",
+      "Subagent completion events do not update authority",
     );
-    expect(result).toContain("ged-planner");
-    expect(result).toContain("ged-verifier");
-    expect(result).toContain("inventory bundled/project/user skills");
-    expect(result).toContain("without installing or creating anything");
+    expect(result).not.toContain("mandatory for non-trivial");
+    expect(result).not.toContain("checkpoints.json");
+    expect(result).not.toContain("grill-me: needed");
+    expect(result).not.toContain("skip-checkpoint");
+    expect(result).not.toContain("auto-escalation");
   });
 
-  it("requires grill-me after planner clarification refusal", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("refused-needs-clarification");
-    expect(result).toContain("run a main-agent grill-me session");
-    expect(result).toContain(
-      "Do not dismiss the planner's clarification request",
-    );
-  });
-
-  it("requires main-agent sufficiency before planning and plan acceptance", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("Before drafting a non-trivial plan");
-    expect(result).toContain("main-agent sufficiency check");
-    expect(result).toContain("grill-me: needed");
-    expect(result).toContain("grill-me: skipped; reason:");
-    expect(result).toContain("grill-with-docs");
-    expect(result).toContain("main-agent skill decisions");
-    expect(result).toContain(
-      "These are mutating actions that only you perform",
-    );
-    expect(result).toContain("ged-planner authors the plan draft");
-    expect(result).toContain(
-      "Source edits are not safe until you have accepted/written the final plan",
-    );
-  });
-
-  it("includes hard enforcement section", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("Classification is required");
-    expect(result).toContain("structurally guarded");
-  });
-
-  it("includes clean-context review instructions", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("clean-context review");
-    expect(result).toContain("adjudicate");
-  });
-
-  it("requires worker suitability checks and main-agent verifier fixes", () => {
+  it("preserves worker suitability and one-writer guidance", () => {
     const result = buildOrchestrationPrompt({
       enabled: true,
       intercomBridge: true,
@@ -1175,55 +1132,10 @@ describe("orchestration prompt", () => {
       },
     });
     expect(result).toContain("worker-suitability check");
-    expect(result).toContain(
-      "too difficult, ambiguous, risky, coupled, hard to verify",
-    );
-    expect(result).toContain("product, security, architecture");
     expect(result).toContain("implement it directly as the main agent");
-    expect(result).toContain(
-      "fix accepted verifier findings directly by default",
-    );
-    expect(result).toContain("Do not re-invoke worker for verifier fixes");
-    expect(result).toContain("rare new isolated mechanical slice");
-    expect(result).toContain("rerun verification");
-    expect(result).toContain('acceptance: { level: "verified", criteria:');
-    expect(result).toContain("changed-files");
-    expect(result).toContain("commands-run");
-    expect(result).toContain("diff-summary");
-    expect(result).toContain("stopRules");
-    expect(result).not.toContain("maxFinalizationTurns");
-    expect(result).toContain("turnBudget");
-    expect(result).toContain("outputSchema");
-    expect(result).toContain("outcome");
-    expect(result).toContain("findings");
-  });
-
-  it("requires immediate tool-call continuation instead of status-only narration", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain(
-      "Do not end the turn after only narrating that you will inspect, plan, or apply changes",
-    );
-    expect(result).toContain("immediately make the next required tool call");
-    expect(result).toContain("in the same response");
-  });
-
-  it("references subagent tool for dispatch", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("workflowScript");
-    expect(result).toContain("runs.run");
-    expect(result).toContain("async: false");
-    expect(result).toContain("subagent_wait");
-    expect(result).not.toContain('subagent({ agent: "ged-planner"');
-    expect(result).toContain("subagent:async-complete");
-  });
-
-  it("references checkpoint state file", () => {
-    const result = buildOrchestrationPrompt(true);
-    expect(result).toContain("checkpoints.json");
-  });
-
-  it("uses pi-intercom only for decision/progress coordination", () => {
-    const result = buildOrchestrationPrompt(true);
+    expect(result).toContain('acceptance: { level: "verified"');
+    expect(result).toContain("one writer per checkout/worktree");
+    expect(result).toContain("isolated worktrees");
     expect(result).toContain("pi-intercom/contact_supervisor");
     expect(result).toContain(
       "Do not use intercom for routine completion handoffs",
@@ -1260,25 +1172,25 @@ describe("brain orchestration integration", () => {
       JSON.stringify({ agents: { enabled: true } }),
     );
     const suffix = await buildWorkflowPromptSuffix(tmpDir);
-    expect(suffix).toContain("Subagent orchestration");
-    expect(suffix).toContain("Main-agent ownership invariant");
+    expect(suffix).toContain("Execution staffing (independent of governance)");
+    expect(suffix).toContain("Optional assistants are available");
   });
 
-  it("omits orchestration prompt when agents disabled", async () => {
+  it("states direct staffing when agents are disabled", async () => {
     await mkdir(path.join(tmpDir, ".gedoc"), { recursive: true });
     await writeFileAtomic(
       path.join(tmpDir, ".gedoc", "settings.json"),
       JSON.stringify({ agents: { enabled: false } }),
     );
     const suffix = await buildWorkflowPromptSuffix(tmpDir);
-    expect(suffix).not.toContain("Subagent orchestration");
+    expect(suffix).toContain("Subagent staffing is disabled");
   });
 
-  it("omits orchestration prompt when no settings file", async () => {
+  it("defaults to direct staffing when no settings file exists", async () => {
     const suffix = await buildWorkflowPromptSuffix(tmpDir, {
       homeDir: tmpDir,
     });
-    expect(suffix).not.toContain("Subagent orchestration");
+    expect(suffix).toContain("Subagent staffing is disabled");
   });
 });
 

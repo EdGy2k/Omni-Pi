@@ -17,6 +17,13 @@
   only one unambiguously active record as paused, non-selectable work requiring
   human migration review; ambiguous or unsupported records never authorize
   mutation.
+- Replaced staffing-gated role checkpoint guards with authoritative work-mode
+  governance. `ged_work` now resolves direct/planned mode from structured
+  evidence, `ged_governance` records accepted plan and verification evidence,
+  durable pending writes block stale commits across restarts, successful writes
+  make earlier verification stale, and optional subagent completion no longer
+  grants authority. Protected `.ged` state is also guarded through symlink
+  resolution. Commits no longer auto-close work.
 
 ### Dependencies
 

@@ -1,37 +1,47 @@
-# Spec: Task-scoped governance kernel — slice 4
+# Spec: Task-scoped governance kernel — slice 5
 
 ## Goal
 
-Quarantine legacy branch/root checkpoint state and, only when activity is
-unambiguous, import one record as paused, non-selectable task-scoped work.
+Replace role-centric runtime guards and prompts with authoritative,
+staffing-independent governance transitions.
 
 ## Scope
 
-- Discover legacy v2/v3 root and branch checkpoint layouts without following
-  symlinks or treating Markdown as state.
-- Publish a strict immutable migration plan, byte-exact backup, and monotonic
-  phase markers under ignored runtime storage.
-- Import only one clearly active candidate; never import ambiguous, corrupt,
-  unsupported, or inactive candidates.
-- Make imported work non-selectable and initialize paused authoritative state
-  with non-authorizing `migration-required` evidence.
-- Run migration before bootstrap work selection and current-version checks.
+- Resolve work mode from structured mutation, ambiguity, risk, and
+  direct-change evidence when `ged_work` opens a task.
+- Require an active authoritative governance record when continuing work.
+- Add role-neutral runtime transitions for accepted-plan and verification
+  evidence; source writes enter durable pending state before execution and
+  append implementation evidence only after success.
+- Enforce direct/planned/read-only, decision, lifecycle, plan, and verification
+  rules independently of subagent settings.
+- Remove role checkpoint hard guards, completion authority, and commit
+  auto-close from the extension runtime.
+- Update system/orchestration prompts and injected status to use governance
+  vocabulary and treat staffing as optional capacity.
+- Resolve symlinked write/edit targets and protect runtime-owned `.ged` state.
 
 ## Non-goals
 
-- Do not migrate legacy approvals, role checkpoints, or branch identity as
-  authority.
-- Do not delete or rewrite legacy source files.
-- Do not add stale-lock recovery, select imported work, or migrate the
-  remaining legacy guards in this slice.
+- Do not add content/Git fingerprints, broad mutation-tool detection, or staged
+  diff verification; those belong to plan 002.
+- Do not add lifecycle transition commands yet.
+- Do not implement adaptive model/profile selection from plan 003.
+- Keep legacy checkpoint parsing only as non-authorizing compatibility and
+  migration code until later cleanup proves it has no remaining consumers.
 
 ## Acceptance
 
-- Every discovered safe source is backed up byte-for-byte before any import.
-- Only one valid active v2/v3 candidate can be imported, and only when every
-  other candidate is valid and inactive.
-- Imported work is paused, non-selectable, and contains failed
-  `migration-required` evidence rather than legacy authorization.
-- Repeated and interrupted runs converge on one backup, work ID, and evidence
-  ID without overwriting conflicting artifacts.
-- Corrupt journals and unsafe layouts fail closed before bootstrap selection.
+- Governance decisions and guards are identical with subagents enabled or
+  disabled.
+- Direct-change work can mutate after binding; planned-change source mutation
+  requires satisfied plan evidence; unresolved/read-only/non-active work is
+  blocked.
+- Commits require satisfied verification recorded after the latest
+  implementation evidence, regardless of who performed verification.
+- Pending writes remain commit-blocking across runtime restart; failed writes
+  clear pending state without implementation evidence.
+- Subagent completion and legacy checkpoints cannot authorize mutation.
+- Successful commits do not close authoritative or legacy work state.
+- Prompt/status injection reads governance JSON rather than Markdown or role
+  checkpoints as authority.

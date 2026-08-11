@@ -75,7 +75,7 @@ describe("commit settings", () => {
       "continue without separate human approval",
     );
     expect(buildPlanReviewWorkflowPrompt("chat")).toContain(
-      "show the accepted plan to the user in chat",
+      "show them to the user in chat",
     );
     expect(buildPlanReviewWorkflowPrompt("chat")).not.toContain(
       "before planner handoff",
@@ -84,13 +84,13 @@ describe("commit settings", () => {
       "gedpi_plan_review",
     );
     expect(buildPlanReviewWorkflowPrompt("plannotator")).toContain(
-      "native Glimpse window",
+      "visual review surface",
     );
     expect(buildPlanReviewWorkflowPrompt("plannotator")).toContain(
       "fall back to chat approval",
     );
     expect(buildPlanReviewWorkflowPrompt("plannotator")).toContain(
-      "Do not use /plannotator or plannotator_submit_plan directly",
+      "accepted plan evidence",
     );
   });
 });

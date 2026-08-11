@@ -68,10 +68,10 @@ describe("Ged command surface", () => {
 
     const result = await command?.execute({ cwd: process.cwd(), args: [] });
 
-    expect(result).toContain("grill-me: needed");
-    expect(result).toContain("grill-me: skipped; reason:");
+    expect(result).toContain("exactly one concise unresolved question");
+    expect(result).toContain("summarize");
     expect(result).toContain("grill-with-docs");
-    expect(result).toContain("Recommended answer:");
+    expect(result).toContain("recommended answer or default assumption");
   });
 
   test("rewriteCommandWithRtk returns rewritten bash command when supported", async () => {

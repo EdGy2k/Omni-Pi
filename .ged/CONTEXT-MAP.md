@@ -26,4 +26,3 @@ Ged memory is current-state oriented. Durable root files describe the project as
 - `.ged/runtime/<work-id>/governance.json` (authoritative structured state)
 - `.ged/runtime/<work-id>/STATE.md`
 - `.ged/runtime/<work-id>/SESSION-SUMMARY.md`
-- `.ged/runtime/<work-id>/checkpoints.json`

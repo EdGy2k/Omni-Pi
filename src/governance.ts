@@ -122,6 +122,14 @@ export interface GovernanceRepositoryIdentity {
   baseHead: string | null;
 }
 
+export interface GovernancePendingMutation {
+  id: string;
+  requestId: string;
+  toolCallId: string;
+  target: string;
+  startedAt: string;
+}
+
 export interface GovernanceWorkState {
   schemaVersion: 1;
   revision: number;
@@ -135,6 +143,8 @@ export interface GovernanceWorkState {
   executionProfile: ExecutionProfile;
   approvals: GovernanceApproval[];
   evidence: GovernanceEvidence[];
+  /** Optional only for compatibility with schema-v1 records from earlier slices. */
+  pendingMutations?: GovernancePendingMutation[];
   lifecycle: WorkLifecycle;
 }
 

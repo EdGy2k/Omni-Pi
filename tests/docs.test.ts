@@ -41,7 +41,7 @@ describe("documentation coverage", () => {
     expect(backlog).toContain("dead-code / unused-export analysis");
   });
 
-  test("orchestration docs cover acceptance contracts and deferred parallel exploration roadmap", () => {
+  test("orchestration docs cover governance and deferred adaptive staffing", () => {
     const orchestration = readFileSync(
       new URL(
         "../docs/single-writer-intelligence-orchestration.md",
@@ -54,22 +54,15 @@ describe("documentation coverage", () => {
       "utf8",
     );
 
-    expect(orchestration).toContain("## Worker acceptance contracts");
-    expect(orchestration).toContain("criteria");
-    expect(orchestration).toContain("evidence");
-    expect(orchestration).toContain("verify");
-    expect(orchestration).toContain("stopRules");
-    expect(orchestration).not.toContain("maxFinalizationTurns");
-    expect(orchestration).toContain("workflowScript");
-    expect(orchestration).toContain("turnBudget");
-    expect(orchestration).toContain(
-      "Structured verifier and checkpoint evidence",
-    );
-    expect(orchestration).toContain("Structured planner and explorer outputs");
-    expect(orchestration).toContain(
-      "Parallel explorer agents and dynamic fanout",
-    );
-    expect(orchestration).toContain("Prompt-context dedupe");
+    expect(orchestration).toContain("## Governance plane");
+    expect(orchestration).toContain("### Role-neutral transitions");
+    expect(orchestration).toContain("sole machine authority");
+    expect(orchestration).toContain("later in append order");
+    expect(orchestration).toContain("## Current enforcement boundary");
+    expect(orchestration).toContain("Plan 002");
+    expect(orchestration).toContain("## Execution staffing plane");
+    expect(orchestration).toContain("One writer");
+    expect(orchestration).toContain("pi-intercom");
     expect(backlog).toContain("parallel `ged-explorer` agents");
     expect(backlog).toContain("ctx.getSystemPromptOptions()");
   });

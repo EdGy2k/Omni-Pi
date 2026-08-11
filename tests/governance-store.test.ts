@@ -11,8 +11,12 @@ import {
   appendGovernanceEvidence,
   compareAndSwapGovernanceState,
   GovernanceStoreError,
+  governanceActionBlockReason,
+  governanceMutationBlockReason,
   initializeGovernanceState,
   readGovernanceState,
+  recordGovernanceImplementation,
+  recordSatisfiedGovernanceEvidence,
   regenerateGovernanceProjection,
   renderGovernanceProjection,
 } from "../src/governance-store.js";
@@ -212,5 +216,122 @@ describe("governance state store", () => {
       expected,
     );
     expect(await readFile(opened.paths.statePath, "utf8")).toBe(expected);
+  });
+
+  it("enforces mode, plan, and verification freshness by append order", async () => {
+    const { rootDir, opened, decision } = await setup();
+    let state = await initializeGovernanceState(rootDir, opened.workId, {
+      decision,
+      executionProfile: "coordinated",
+    });
+    expect(governanceActionBlockReason(state, "metadata-mutation")).toBeNull();
+    expect(governanceActionBlockReason(state, "source-mutation")).toContain(
+      "without satisfied plan evidence",
+    );
+
+    state = await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+      id: "plan-newer-array-order",
+      kind: "plan",
+      source: "agent",
+      recordedAt: "2026-08-10T04:00:00.000Z",
+      summary: "Accepted plan",
+      outcome: "satisfied",
+    });
+    expect(governanceActionBlockReason(state, "source-mutation")).toBeNull();
+    state = await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+      id: "verify-before-implementation",
+      kind: "verification",
+      source: "agent",
+      recordedAt: "2026-08-10T03:00:00.000Z",
+      summary: "Checks passed despite older wall clock",
+      outcome: "satisfied",
+    });
+    expect(governanceActionBlockReason(state, "commit")).toBeNull();
+
+    state = await recordGovernanceImplementation(rootDir, opened.workId, {
+      id: "implementation-after-verify",
+      kind: "implementation",
+      source: "runtime",
+      recordedAt: "2026-08-10T02:00:00.000Z",
+      summary: "Successful write",
+      outcome: "observed",
+    });
+    expect(governanceActionBlockReason(state, "commit")).toContain(
+      "no satisfied verification evidence newer",
+    );
+    state = await recordSatisfiedGovernanceEvidence(rootDir, opened.workId, {
+      id: "verify-after-implementation",
+      kind: "verification",
+      source: "agent",
+      recordedAt: "2026-08-10T01:00:00.000Z",
+      summary: "Fresh verification by append order",
+      outcome: "satisfied",
+    });
+    expect(governanceActionBlockReason(state, "commit")).toBeNull();
+
+    state = await appendGovernanceEvidence(rootDir, opened.workId, {
+      id: "later-failed-verification",
+      kind: "verification",
+      source: "runtime",
+      recordedAt: "2026-08-10T09:00:00.000Z",
+      summary: "Later verification failed",
+      outcome: "failed",
+    });
+    expect(governanceActionBlockReason(state, "commit")).toContain(
+      "no satisfied verification evidence newer",
+    );
+    state = await appendGovernanceEvidence(rootDir, opened.workId, {
+      id: "later-failed-plan",
+      kind: "plan",
+      source: "runtime",
+      recordedAt: "2026-08-10T10:00:00.000Z",
+      summary: "Later plan review failed",
+      outcome: "failed",
+    });
+    expect(governanceActionBlockReason(state, "source-mutation")).toContain(
+      "without satisfied plan evidence",
+    );
+  });
+
+  it("fails closed for missing, read-only, unresolved, and non-active state", async () => {
+    const { rootDir, opened } = await setup();
+    await expect(
+      governanceMutationBlockReason(rootDir, opened.workId),
+    ).resolves.toContain("no authoritative governance state");
+
+    const readOnly = resolveGovernance({
+      intent: { mutation: "none" },
+      ambiguity: "sufficient",
+      risk: "low",
+    });
+    let state = await initializeGovernanceState(rootDir, opened.workId, {
+      decision: readOnly,
+      executionProfile: "solo",
+    });
+    expect(governanceActionBlockReason(state, "metadata-mutation")).toContain(
+      "read-only",
+    );
+    state = { ...state, lifecycle: "paused" };
+    expect(governanceActionBlockReason(state, "metadata-mutation")).toContain(
+      "lifecycle paused",
+    );
+    state = {
+      ...state,
+      lifecycle: "active",
+      decision: resolveGovernance({
+        intent: { mutation: "requested", minimumMode: "planned-change" },
+        ambiguity: "decision-needed",
+        risk: "normal",
+        change: {
+          clearScope: true,
+          bounded: true,
+          reversible: true,
+          deterministicCheck: true,
+        },
+      }),
+    };
+    expect(governanceActionBlockReason(state, "metadata-mutation")).toContain(
+      "user-owned decision",
+    );
   });
 });

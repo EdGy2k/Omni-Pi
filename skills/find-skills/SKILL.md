@@ -17,7 +17,7 @@ Resist the urge to skip straight to `skill-creator` when an off-the-shelf skill 
 
 ## When to Use
 
-### During the skill-fit checkpoint (non-trivial tasks)
+### During the skill-fit checkpoint (planned-change work)
 
 When the inventory of bundled/project/user skills doesn't cover the clarified task, search the ecosystem for an existing skill before creating one from scratch.
 
@@ -39,7 +39,7 @@ Use `npx skills list` to see what's globally available, and check `.ged/SKILLS.m
 
 ## The Skill-Fit Checkpoint
 
-During non-trivial task planning, before drafting the plan:
+During planned-change work, before drafting the plan:
 
 1. **Clarify** the task enough to judge skill needs.
 2. **Inventory and select** what's available — bundled, project-scoped, and user skills. With subagents enabled, `ged-explorer` should do this read-only reconnaissance.
