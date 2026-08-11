@@ -21,9 +21,11 @@ change evidence. Mutating requests explicitly open/continue task-scoped work;
 authoritative governance state, not role invocation, controls mutation.
 
 Execution staffing is orthogonal: keep the primary brain as user-facing decision
-owner, use optional assistants only when useful, keep one writer per
-checkout/worktree, and use `pi-intercom` only for explicit independent-session
-dependencies. Assistant completion is evidence proposal, never authorization.
+owner, recommend team shape from decomposition/context/difficulty/budget, keep
+one writer per checkout/worktree, require managed worktrees for parallel
+writers, and use external `pi-intercom` only for opt-in exact-target verified
+dependency facts. Native supervisor routing owns child decisions. Assistant
+completion is evidence proposal, never authorization.
 
 **Memory**: `.ged/` files hold durable project standards, context, and Ged workflow state — not source code. `.pi/` is Pi-runtime-local state and should stay out of Git.
 
@@ -54,7 +56,7 @@ When changing Ged's workflow, update the durable documentation and generated pro
 
 - `src/brain.ts` controls the text appended to the main agent system prompt.
 - `src/orchestration.ts` controls the detailed subagent orchestration contract and guard messages.
-- `src/agent-settings.ts` controls the bundled Ged runtime agent prompts generated into `.pi/agents/`: `ged-explorer`, `ged-planner`, `ged-plan-reviewer`, `ged-verifier`, and optional `ged-worker`.
+- `src/agent-settings.ts` controls the bundled Ged runtime agent prompts generated into `.pi/agents/`: `ged-explorer`, `ged-planner`, `ged-plan-reviewer`, `ged-verifier`, optional `ged-worker`, and depth-one read-only-fanout `ged-smart-worker`.
 - `src/commit-settings.ts` controls user-configurable workflow preferences that are also appended to the system prompt.
 - `AGENTS.md` documents the intended workflow for future coding sessions.
 - Keep `.ged/` memory schema changes deliberate and backward-compatible; GedPi is now the canonical implementation.

@@ -9,6 +9,8 @@
 
 ## Status
 
+- **Status**: DONE — adaptive staffing verified
+
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
@@ -142,13 +144,13 @@ writer per worktree.” Document model availability and fallback behavior.
 
 ## Done criteria
 
-- [ ] Execution profile is independent of governance mode.
-- [ ] Scout, Worker, Smart Worker, and verifier capabilities are representable.
-- [ ] Worker defaults to GPT-5.6 Luna with `max` reasoning.
-- [ ] Parallel writers require managed worktrees.
-- [ ] Native supervisor communication is default; peer messaging is narrow and opt-in.
-- [ ] Generated contracts validate against installed pi-subagents APIs.
-- [ ] Focused/full verification and changelog pass.
+- [x] Execution profile is independent of governance mode.
+- [x] Scout, Worker, Smart Worker, and verifier capabilities are representable.
+- [x] Worker defaults to GPT-5.6 Luna with `max` reasoning.
+- [x] Parallel writers require managed worktrees.
+- [x] Native supervisor communication is default; peer messaging is narrow and opt-in.
+- [x] Generated contracts validate against installed pi-subagents APIs.
+- [x] Focused/full verification and changelog pass.
 
 ## STOP conditions
 
@@ -164,4 +166,3 @@ writer per worktree.” Document model availability and fallback behavior.
 Model profiles are defaults, not permanent policy. Preserve explicit user role
 overrides and fallbacks across profile upgrades. Re-evaluate model tiering only
 with registry/release evidence.
-

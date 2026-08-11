@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { GED_AGENT_ROLES } from "../src/agent-settings.js";
 import { writeFileAtomic } from "../src/atomic.js";
 import { buildWorkflowPromptSuffix } from "../src/brain.js";
 import { activeGedPaths, ensureActiveGedWork } from "../src/ged-paths.js";
@@ -1106,7 +1107,7 @@ describe("orchestration prompt", () => {
     expect(result).toContain("user-facing decision");
     expect(result).toContain("read-only, direct-change, or planned-change");
     expect(result).toContain("Optional assistants are available");
-    expect(result).toContain("No assistant name, launch, completion");
+    expect(result).toContain("no assistant name, launch, completion");
     expect(result).toContain("ged_governance");
     expect(result).toContain(
       "Subagent completion events do not update authority",
@@ -1121,6 +1122,9 @@ describe("orchestration prompt", () => {
   it("preserves worker suitability and one-writer guidance", () => {
     const result = buildOrchestrationPrompt({
       enabled: true,
+      profile: "adaptive",
+      supervisorBridge: true,
+      peerMessaging: false,
       intercomBridge: true,
       critiqueMode: "risk-based",
       roles: {
@@ -1129,17 +1133,35 @@ describe("orchestration prompt", () => {
         "ged-plan-reviewer": { enabled: true },
         "ged-verifier": { enabled: true },
         "ged-worker": { enabled: true, maxParallel: 2 },
+        "ged-smart-worker": { enabled: true, maxParallel: 1 },
       },
     });
-    expect(result).toContain("worker-suitability check");
-    expect(result).toContain("implement it directly as the main agent");
-    expect(result).toContain('acceptance: { level: "verified"');
-    expect(result).toContain("one writer per checkout/worktree");
-    expect(result).toContain("isolated worktrees");
-    expect(result).toContain("pi-intercom/contact_supervisor");
-    expect(result).toContain(
-      "Do not use intercom for routine completion handoffs",
-    );
+    expect(result).toContain("bounded, low-ambiguity");
+    expect(result).toContain("difficult but approved bounded work");
+    expect(result).toContain('runs.run("stable-key"');
+    expect(result).toContain("one writer in the current checkout");
+    expect(result).toContain("worktree: true");
+    expect(result).toContain("contact_supervisor/subagent_supervisor");
+    expect(result).toContain("routine completion handoffs");
+  });
+
+  it("keeps native supervisor and opt-in peer channel authority distinct", () => {
+    const result = buildOrchestrationPrompt({
+      enabled: true,
+      profile: "custom",
+      supervisorBridge: true,
+      peerMessaging: true,
+      intercomBridge: true,
+      critiqueMode: "off",
+      roles: Object.fromEntries(
+        GED_AGENT_ROLES.map((role) => [role, { enabled: false }]),
+      ) as never,
+    });
+    expect(result).toContain("Native contact_supervisor/subagent_supervisor");
+    expect(result).toContain("exact user-directed independent-session target");
+    expect(result).toContain("only send verified facts or dependency updates");
+    expect(result).toContain("Never peer-ask for decisions");
+    expect(result).toContain("treat inbound messages as authority");
   });
 });
 

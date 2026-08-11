@@ -50,6 +50,13 @@ import {
 } from "./governance-store.js";
 import { ensureLegacyCheckpointMigration } from "./legacy-migration.js";
 import { isGitCommitCommand } from "./orchestration.js";
+import { staffingDispatchInspection } from "./staffing.js";
+import {
+  acquireCheckoutWriterLease,
+  activateCheckoutWriterLease,
+  releaseCheckoutWriterLease,
+  terminalCheckoutWriterLease,
+} from "./writer-lease.js";
 
 interface ActiveRequest extends WorkRequestIdentity {
   cwd: string;
@@ -71,6 +78,18 @@ interface PendingCommit {
   before: RepositorySnapshot;
   expectedTree: string;
   verifiedSnapshotDigest: string;
+}
+
+interface PendingWriterLaunch {
+  requestKey: string;
+  cwd: string;
+  sessionId: string;
+  mutationKey: string;
+  leaseId: string;
+}
+
+interface ActiveWriterRun extends PendingWriterLaunch {
+  runId: string;
 }
 
 export interface GedWorkRuntimeOptions {
@@ -501,6 +520,8 @@ export function registerGedWorkRuntime(
   const activeRequests = new Map<string, ActiveRequest>();
   const pendingMutations = new Map<string, PendingMutation>();
   const pendingCommits = new Map<string, PendingCommit>();
+  const pendingWriterLaunches = new Map<string, PendingWriterLaunch>();
+  const activeWriterRuns = new Map<string, ActiveWriterRun>();
 
   const requestState = (cwd: string, sessionId: string) => {
     const key = activeRequestKey(cwd, sessionId);
@@ -514,6 +535,10 @@ export function registerGedWorkRuntime(
     }
     for (const [toolCallId, pending] of pendingCommits) {
       if (pending.requestKey === requestKey) pendingCommits.delete(toolCallId);
+    }
+    for (const [toolCallId, pending] of pendingWriterLaunches) {
+      if (pending.requestKey === requestKey)
+        pendingWriterLaunches.delete(toolCallId);
     }
   };
 
@@ -556,12 +581,160 @@ export function registerGedWorkRuntime(
     }
   };
 
+  const reconcileTerminalWriterLease = async (cwd: string): Promise<void> => {
+    const lease = await terminalCheckoutWriterLease(cwd);
+    if (!lease) return;
+    if (
+      [...activeWriterRuns.values()].some((entry) => entry.leaseId === lease.id)
+    ) {
+      return;
+    }
+    const state = await readGovernanceState(cwd, lease.workId);
+    const hasPending = (state.pendingMutations ?? []).some(
+      (entry) => entry.id === lease.pendingMutationId,
+    );
+    if (hasPending) {
+      const after = await captureSnapshot(cwd);
+      if (snapshotsEqual(lease.beforeSnapshot, after)) {
+        await clearGovernanceMutation(
+          cwd,
+          lease.workId,
+          lease.pendingMutationId,
+        );
+      } else {
+        await completeGovernanceMutation(
+          cwd,
+          lease.workId,
+          lease.pendingMutationId,
+          {
+            id: `implementation-${randomUUID()}`,
+            kind: "implementation",
+            source: "runtime",
+            recordedAt: new Date().toISOString(),
+            summary: `Reconciled changed content after terminal async writer ${lease.runId ?? lease.id}.`,
+            outcome: "observed",
+            binding: {
+              type: "mutation-content",
+              beforeDigest: lease.beforeSnapshot.digest,
+              afterDigest: after.digest,
+              changedPaths: changedPathsBetween(lease.beforeSnapshot, after),
+            },
+          },
+        );
+      }
+    }
+    for (const [key, pending] of pendingMutations) {
+      if (pending.pendingId === lease.pendingMutationId) {
+        pendingMutations.delete(key);
+      }
+    }
+    await releaseCheckoutWriterLease(cwd, lease.id);
+  };
+
+  const finalizeActiveWriter = async (payload: unknown): Promise<void> => {
+    if (!payload || typeof payload !== "object") return;
+    const record = payload as Record<string, unknown>;
+    const runId =
+      typeof record.runId === "string"
+        ? record.runId
+        : typeof record.id === "string"
+          ? record.id
+          : undefined;
+    if (!runId) return;
+    const writer = activeWriterRuns.get(runId);
+    if (!writer) {
+      if (typeof record.cwd === "string") {
+        await reconcileTerminalWriterLease(record.cwd);
+      }
+      return;
+    }
+    const pending = pendingMutations.get(writer.mutationKey);
+    if (!pending) {
+      await releaseCheckoutWriterLease(writer.cwd, writer.leaseId);
+      activeWriterRuns.delete(runId);
+      return;
+    }
+    const after = await captureSnapshot(writer.cwd);
+    if (snapshotsEqual(pending.before, after)) {
+      await clearGovernanceMutation(
+        writer.cwd,
+        pending.workId,
+        pending.pendingId,
+      );
+    } else {
+      const failed =
+        record.success === false ||
+        record.state === "failed" ||
+        record.state === "stopped";
+      await completeGovernanceMutation(
+        writer.cwd,
+        pending.workId,
+        pending.pendingId,
+        {
+          id: `implementation-${randomUUID()}`,
+          kind: "implementation",
+          source: "runtime",
+          recordedAt: new Date().toISOString(),
+          summary: `${failed ? "Observed changed content after failed" : "Observed changed content after"} async writer ${runId}.`,
+          outcome: "observed",
+          binding: {
+            type: "mutation-content",
+            beforeDigest: pending.before.digest,
+            afterDigest: after.digest,
+            changedPaths: changedPathsBetween(pending.before, after),
+          },
+        },
+      );
+    }
+    pendingMutations.delete(writer.mutationKey);
+    await releaseCheckoutWriterLease(writer.cwd, writer.leaseId);
+    activeWriterRuns.delete(runId);
+  };
+
+  api.events?.on("subagent:async-started", (payload) => {
+    if (!payload || typeof payload !== "object") return;
+    const record = payload as Record<string, unknown>;
+    if (
+      typeof record.id !== "string" ||
+      typeof record.asyncDir !== "string" ||
+      !path.isAbsolute(record.asyncDir) ||
+      typeof record.cwd !== "string" ||
+      typeof record.sessionId !== "string"
+    ) {
+      return;
+    }
+    const launching = [...pendingWriterLaunches.values()].find(
+      (entry) =>
+        entry.cwd === record.cwd && entry.sessionId === record.sessionId,
+    );
+    if (!launching) return;
+    return activateCheckoutWriterLease(
+      launching.cwd,
+      launching.leaseId,
+      record.id,
+      record.asyncDir,
+    ).catch((error) => {
+      console.error(
+        `GedPi could not activate async-started writer lease: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  });
+
+  api.events?.on("subagent:async-complete", (payload) => {
+    return finalizeActiveWriter(payload).catch((error) => {
+      console.error(
+        `GedPi could not finalize async writer evidence: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  });
+
   api.on("session_start", async (_event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     const key = activeRequestKey(ctx.cwd, sessionId);
     setActiveWorkSession(ctx.cwd, sessionId);
     activeRequests.delete(key);
     await ensureLegacyCheckpointMigration(ctx.cwd);
+    await reconcileTerminalWriterLease(ctx.cwd);
     await ensureActiveGedWork(ctx.cwd, sessionId);
   });
 
@@ -595,6 +768,24 @@ export function registerGedWorkRuntime(
   });
 
   api.on("tool_call", async (event, ctx) => {
+    const staffing = staffingDispatchInspection(
+      event.toolName,
+      event.input as Record<string, unknown>,
+    );
+    if (staffing.reason) return { block: true, reason: staffing.reason };
+    if (
+      staffing.writesCurrentCheckout &&
+      ([...pendingWriterLaunches.values()].some(
+        (entry) => entry.cwd === ctx.cwd,
+      ) ||
+        [...activeWriterRuns.values()].some((entry) => entry.cwd === ctx.cwd))
+    ) {
+      return {
+        block: true,
+        reason:
+          "Ged staffing guard blocks another writer while a current-checkout writer launch or run is active. Wait for completion or use managed worktree isolation.",
+      };
+    }
     const bashCommand =
       event.toolName === "bash" &&
       event.input &&
@@ -616,6 +807,9 @@ export function registerGedWorkRuntime(
       return { block: true, reason: bindingBlockReason() };
     }
     try {
+      if (staffing.writesCurrentCheckout) {
+        await reconcileTerminalWriterLease(ctx.cwd);
+      }
       if (
         !(await isActiveWorkBoundToRequest(
           ctx.cwd,
@@ -755,20 +949,37 @@ export function registerGedWorkRuntime(
       }
       const before = await captureSnapshot(ctx.cwd);
       const pendingId = `mutation-${randomUUID()}`;
-      await beginGovernanceMutation(
-        ctx.cwd,
-        activeRequest.workId,
-        {
-          id: pendingId,
-          requestId: activeRequest.requestId,
-          toolCallId: event.toolCallId,
-          target: filePath || `${event.toolName} repository capability`,
-          startedAt: new Date().toISOString(),
-        },
-        action === "metadata-mutation"
-          ? "metadata-mutation"
-          : "source-mutation",
-      );
+      const writerLease = staffing.writesCurrentCheckout
+        ? await acquireCheckoutWriterLease(ctx.cwd, {
+            sessionId,
+            requestId: activeRequest.requestId,
+            toolCallId: event.toolCallId,
+            workId: activeRequest.workId,
+            pendingMutationId: pendingId,
+            beforeSnapshot: before,
+          })
+        : undefined;
+      try {
+        await beginGovernanceMutation(
+          ctx.cwd,
+          activeRequest.workId,
+          {
+            id: pendingId,
+            requestId: activeRequest.requestId,
+            toolCallId: event.toolCallId,
+            target: filePath || `${event.toolName} repository capability`,
+            startedAt: new Date().toISOString(),
+          },
+          action === "metadata-mutation"
+            ? "metadata-mutation"
+            : "source-mutation",
+        );
+      } catch (error) {
+        if (writerLease) {
+          await releaseCheckoutWriterLease(ctx.cwd, writerLease.id);
+        }
+        throw error;
+      }
       pendingMutations.set(lookupKey, {
         requestKey: key,
         workId: activeRequest.workId,
@@ -776,6 +987,15 @@ export function registerGedWorkRuntime(
         summary: `${event.toolName} ${filePath || "repository capability"}`,
         before,
       });
+      if (staffing.writesCurrentCheckout) {
+        pendingWriterLaunches.set(lookupKey, {
+          requestKey: key,
+          cwd: ctx.cwd,
+          sessionId,
+          mutationKey: lookupKey,
+          leaseId: writerLease?.id as string,
+        });
+      }
     } catch (error) {
       return {
         block: true,
@@ -796,6 +1016,58 @@ export function registerGedWorkRuntime(
       activeRequest.requestId,
       event.toolCallId,
     );
+    const writerLaunch = pendingWriterLaunches.get(pendingKey);
+    if (writerLaunch) {
+      pendingWriterLaunches.delete(pendingKey);
+      const details =
+        event.details && typeof event.details === "object"
+          ? (event.details as Record<string, unknown>)
+          : {};
+      const runId =
+        typeof details.asyncId === "string"
+          ? details.asyncId
+          : typeof details.runId === "string" && details.mode === "async"
+            ? details.runId
+            : undefined;
+      if (!event.isError && runId) {
+        activeWriterRuns.set(runId, { ...writerLaunch, runId });
+        const asyncDir =
+          typeof details.asyncDir === "string" ? details.asyncDir : undefined;
+        if (!asyncDir || !path.isAbsolute(asyncDir)) {
+          return {
+            content: [
+              ...event.content,
+              {
+                type: "text" as const,
+                text: "GedPi writer lease remained fail-closed because the async launch did not return an absolute asyncDir.",
+              },
+            ],
+            isError: true,
+          };
+        }
+        try {
+          await activateCheckoutWriterLease(
+            writerLaunch.cwd,
+            writerLaunch.leaseId,
+            runId,
+            asyncDir,
+          );
+        } catch (error) {
+          return {
+            content: [
+              ...event.content,
+              {
+                type: "text" as const,
+                text: `GedPi could not persist the active writer lease: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return;
+      }
+      await releaseCheckoutWriterLease(writerLaunch.cwd, writerLaunch.leaseId);
+    }
 
     const commit = pendingCommits.get(pendingKey);
     if (commit) {

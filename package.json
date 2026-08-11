@@ -94,6 +94,7 @@
     "@mariozechner/pi-coding-agent": "npm:@earendil-works/pi-coding-agent@0.84.1",
     "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@0.84.1",
     "@plannotator/pi-extension": "0.25.0",
+    "acorn": "8.15.0",
     "glimpseui": "0.8.1",
     "jiti": "^2.7.0",
     "pi-intercom": "0.10.0",

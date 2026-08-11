@@ -1,8 +1,8 @@
-# Tests: Content-bound governance (Plan 002)
+# Tests: Adaptive staffing and model profiles (Plan 003)
 
 ## Focused
 
-- `npm test -- tests/content-fingerprint.test.ts tests/governance-store.test.ts tests/work-runtime.test.ts tests/brain.test.ts`
+- `npm test -- tests/staffing.test.ts tests/writer-lease.test.ts tests/agent-settings.test.ts tests/commands.test.ts tests/orchestration.test.ts tests/work-runtime.test.ts tests/runtime.test.ts`
 - `npm run check`
 - `npm run lint`
 
@@ -15,12 +15,15 @@
 
 ## Scenario acceptance
 
-- Canonical snapshots cover empty, staged, unstaged, binary, untracked, rename,
-  deletion, spaces, linked worktree, and large-file repositories.
-- Exact plan-byte edits invalidate accepted-plan authority.
-- `sed -i`, redirection, formatter/script, and unknown mutators are detected by
-  pre/post snapshots; no-op and modify-restore final equality remain clean.
-- Verification failures/malformed commands are non-authorizing.
-- Verified staged bytes commit; drift, auto-stage flags, unrelated staged paths,
-  failed hooks, compound commands, and unchanged HEAD do not record milestones.
-- Amend and multiple verified commits work while lifecycle remains active.
+- Adaptive profile table selects proportional staffing independently of work
+  mode.
+- `maximum`/legacy effort normalizes to `max`; Luna/max Worker and Sol/high
+  Smart Worker frontmatter survive runtime discovery and public preflight.
+- Profile setup rejects missing live model IDs without changing settings; role
+  overrides and fallback order survive profile enablement.
+- Two same-checkout writer lanes block, parallel scouts pass, managed isolated
+  writers pass, and dynamic possibly-writing parallel lanes fail closed.
+- Normal Worker has no subagent tool; Smart Worker has depth one and inherited
+  capability ceiling permits only read-only Ged child agents.
+- Supervisor and peer communication prompts/settings remain distinct; peer
+  messaging defaults off and can only send verified dependency facts.

@@ -28,13 +28,19 @@ function effectiveFixture(
 ): EffectiveGedAgentsSettings {
   return {
     enabled: true,
+    profile: "custom",
+    supervisorBridge: true,
+    peerMessaging: false,
     intercomBridge: true,
     critiqueMode: "risk-based",
     models: {},
     roles: Object.fromEntries(
       GED_AGENT_ROLES.map((role) => [
         role,
-        { enabled: role !== "ged-worker", model: overrides.models?.[role] },
+        {
+          enabled: role !== "ged-worker" && role !== "ged-smart-worker",
+          model: overrides.models?.[role],
+        },
       ]),
     ) as EffectiveGedAgentsSettings["roles"],
     allowCheckpointBypass: false,
@@ -101,7 +107,7 @@ describe("Ged optional agent settings", () => {
       defaultModel: "openai/gpt-5-mini",
       models: {
         "ged-explorer": "opencode/nemotron",
-        "ged-planner": { model: "openai/gpt-5.5", reasoningEffort: "high" },
+        "ged-planner": { model: "openai/gpt-5.5", thinking: "high" },
       },
       allowCheckpointBypass: false,
     });
@@ -233,7 +239,9 @@ describe("Ged optional agent settings", () => {
     expect(explorer).toContain("description: Read-only Ged codebase scout");
     expect(explorer).toContain("name: ged-explorer");
     expect(explorer).toContain("model: openai/gpt-5-mini");
-    expect(explorer).toContain("tools: read, grep, find, ls, bash");
+    expect(explorer).toContain(
+      "tools: read, grep, find, ls, contact_supervisor",
+    );
     expect(explorer).toContain("systemPromptMode: replace");
     expect(explorer).toContain("inheritSkills: false");
     expect(explorer).toContain("completionGuard: false");
@@ -310,6 +318,163 @@ describe("Ged optional agent settings", () => {
       artifacts: false,
     });
     expect(worker).toMatchObject({ ok: false, code: "missing_agent" });
+  });
+
+  test("adaptive profile generates and preflights exact capability contracts", async () => {
+    const rootDir = await tempDir("ged-agent-adaptive-root-");
+    const homeDir = await tempDir("ged-agent-adaptive-home-");
+    await writeGedAgentsSettings(projectGedSettingsPath(rootDir), {
+      enabled: true,
+      profile: "adaptive",
+    });
+    await syncGedSubagentRuntimeConfig(rootDir, {
+      homeDir,
+      modelAvailability: {
+        isAvailable: (modelId) =>
+          modelId === "openai-codex/gpt-5.6-sol" ||
+          modelId === "openai-codex/gpt-5.6-luna",
+      },
+    });
+
+    type PreflightResult =
+      | {
+          ok: true;
+          contract: {
+            agent: { name: string };
+            context: string;
+            model?: string;
+            thinking?: string;
+            tools: { fanoutAuthorized: boolean; effectiveAllowlist: string[] };
+          };
+        }
+      | { ok: false; code: string; message: string };
+    const jiti = createJiti(import.meta.url);
+    const { resolveSubagentLaunchContract } = await jiti.import<{
+      resolveSubagentLaunchContract(input: {
+        agent: string;
+        cwd: string;
+        agentScope: "project";
+        artifacts: false;
+        availableModels: Array<{ provider: string; id: string }>;
+      }): Promise<PreflightResult>;
+    }>(import.meta.resolve("pi-subagents/preflight"));
+    const preflight = (agent: string) =>
+      resolveSubagentLaunchContract({
+        agent,
+        cwd: rootDir,
+        agentScope: "project",
+        artifacts: false,
+        availableModels: [
+          { provider: "openai-codex", id: "gpt-5.6-sol" },
+          { provider: "openai-codex", id: "gpt-5.6-luna" },
+        ],
+      });
+
+    const scout = await preflight("ged-explorer");
+    expect(scout).toMatchObject({
+      ok: true,
+      contract: {
+        context: "fresh",
+        model: "openai-codex/gpt-5.6-sol:low",
+        thinking: "low",
+        tools: { fanoutAuthorized: false },
+      },
+    });
+    if (scout.ok) {
+      expect(scout.contract.tools.effectiveAllowlist).not.toContain("bash");
+      expect(scout.contract.tools.effectiveAllowlist).not.toContain("edit");
+      expect(scout.contract.tools.effectiveAllowlist).not.toContain("write");
+    }
+    const worker = await preflight("ged-worker");
+    expect(worker).toMatchObject({
+      ok: true,
+      contract: {
+        context: "fork",
+        model: "openai-codex/gpt-5.6-luna:max",
+        thinking: "max",
+        tools: {
+          fanoutAuthorized: false,
+          effectiveAllowlist: expect.arrayContaining(["contact_supervisor"]),
+        },
+      },
+    });
+    const smartWorker = await preflight("ged-smart-worker");
+    expect(smartWorker).toMatchObject({
+      ok: true,
+      contract: {
+        context: "fork",
+        model: "openai-codex/gpt-5.6-sol:high",
+        thinking: "high",
+        tools: {
+          fanoutAuthorized: true,
+          effectiveAllowlist: expect.arrayContaining(["subagent"]),
+        },
+      },
+    });
+    const verifier = await preflight("ged-verifier");
+    expect(verifier).toMatchObject({
+      ok: true,
+      contract: {
+        context: "fresh",
+        model: "openai-codex/gpt-5.6-sol:high",
+        thinking: "high",
+        tools: { fanoutAuthorized: false },
+      },
+    });
+    if (verifier.ok) {
+      expect(verifier.contract.tools.effectiveAllowlist).not.toContain("bash");
+      expect(verifier.contract.tools.effectiveAllowlist).not.toContain("edit");
+      expect(verifier.contract.tools.effectiveAllowlist).not.toContain("write");
+    }
+  });
+
+  test("adaptive profile preserves overrides and reports unavailable chains", async () => {
+    const rootDir = await tempDir("ged-agent-adaptive-diagnostic-");
+    const homeDir = await tempDir("ged-agent-adaptive-diagnostic-home-");
+    await writeGedAgentsSettings(projectGedSettingsPath(rootDir), {
+      enabled: true,
+      profile: "adaptive",
+      intercomBridge: false,
+      peerMessaging: true,
+      roles: {
+        "ged-verifier": {
+          model: "anthropic/claude-opus-4.8",
+          reasoningEffort: "maximum",
+          fallback: ["openai-codex/gpt-5.6-sol:maximum"],
+        },
+      },
+    });
+    const effective = await readEffectiveGedAgentsSettings(rootDir, {
+      homeDir,
+    });
+    expect(effective).toMatchObject({
+      profile: "adaptive",
+      supervisorBridge: false,
+      peerMessaging: true,
+      models: {
+        "ged-worker": {
+          model: "openai-codex/gpt-5.6-luna",
+          thinking: "max",
+        },
+        "ged-smart-worker": {
+          model: "openai-codex/gpt-5.6-sol",
+          thinking: "high",
+        },
+        "ged-verifier": {
+          model: "anthropic/claude-opus-4.8",
+          thinking: "max",
+          fallback: ["openai-codex/gpt-5.6-sol:maximum"],
+        },
+      },
+    });
+    const result = await syncGedSubagentRuntimeConfig(rootDir, {
+      homeDir,
+      modelAvailability: {
+        isAvailable: (modelId) => modelId === "anthropic/claude-opus-4.8",
+      },
+    });
+    expect(result.diagnostics.join("\n")).toContain("ged-worker");
+    expect(result.diagnostics.join("\n")).not.toContain("ged-verifier");
   });
 
   test("runtime sync maps explicit intercom setting to pi-subagents bridge config", async () => {
@@ -545,12 +710,10 @@ describe("Ged optional agent settings", () => {
     expect(worker).toContain("main agent should implement it directly");
     expect(worker).toContain("new isolated mechanical slice");
     expect(worker).toContain("Do not commit, push, rebase, merge");
-    expect(worker).toContain('acceptance: { level: "verified", criteria:');
-    expect(worker).toContain("changed-files");
-    expect(worker).toContain("commands-run");
-    expect(worker).toContain("stopRules");
+    expect(worker).toContain("current public criteria");
+    expect(worker).toContain("contact_supervisor");
     expect(worker).not.toContain("maxFinalizationTurns");
-    expect(worker).toContain("turnBudget");
+    expect(worker).not.toContain("turnBudget");
     expect(worker).toContain("acceptanceRole: writer");
   });
 
@@ -583,7 +746,7 @@ describe("Ged optional agent settings", () => {
       thinking: "off",
     };
     expect(formatGedAgentsStatus(effective)).toContain(
-      "- ged-planner: enabled; openai/gpt-5.5 [thinking: off]",
+      "- ged-planner (planner): enabled; openai/gpt-5.5 [thinking: off]",
     );
   });
 
@@ -630,7 +793,7 @@ describe("Ged optional agent settings", () => {
       thinking: "bogus",
     };
     expect(formatGedAgentsStatus(effective)).toContain(
-      "- ged-planner: enabled; openai/gpt-5.5\n",
+      "- ged-planner (planner): enabled; openai/gpt-5.5; read-only",
     );
   });
 

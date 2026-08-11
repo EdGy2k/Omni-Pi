@@ -46,7 +46,7 @@ export default async function gedCoreExtension(
 
   api.on("session_start", async (_event, ctx) => {
     await ensurePiSettings(ctx.cwd);
-    await syncGedSubagentRuntimeConfig(
+    const staffingSync = await syncGedSubagentRuntimeConfig(
       ctx.cwd,
       ctx.modelRegistry
         ? {
@@ -64,6 +64,9 @@ export default async function gedCoreExtension(
           }
         : undefined,
     );
+    if (staffingSync.diagnostics.length > 0 && ctx.hasUI) {
+      ctx.ui.notify(staffingSync.diagnostics.join("\n"), "warning");
+    }
     ensureBundledPromptTemplates(
       fileURLToPath(
         new URL("../../templates/managed-prompts", import.meta.url),

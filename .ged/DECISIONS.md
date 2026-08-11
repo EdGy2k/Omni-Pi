@@ -89,3 +89,36 @@
   - Impact: Work opening records a baseline; mutation-capable tools use durable
     pre/post snapshots; verification commands run through the runtime; commits
     require exact staged/full snapshot equality and observed work scope.
+
+- Date: 2026-08-11
+  - Decision: Represent execution staffing as typed capabilities plus separate
+    model bindings, with a pure adaptive profile recommendation that never
+    consults or changes governance mode.
+  - Why: Decomposability, context spread, difficulty, and budget determine
+    useful capacity; mutation intent, ambiguity, and risk determine authority.
+  - Impact: The coordinator owns the selected solo/assisted/coordinated/high-
+    stakes profile. The validated adaptive binding uses GPT-5.6 Sol/low Scout,
+    Luna/max Worker, and Sol/high Smart Worker while preserving explicit role
+    overrides and fallback order.
+
+- Date: 2026-08-11
+  - Decision: Enforce one current-checkout writer at dispatch and restrict
+    Smart Worker nesting through pi-subagents' public inherited capability
+    ceiling.
+  - Why: Prompt-only writer advice and role names cannot prevent concurrent
+    edits or a nested writer from escaping the approved slice.
+  - Impact: Parallel/dynamic writers require managed worktrees; helper/static
+    launch ambiguity fails closed; a durable checkout lease coordinates
+    processes and terminal-status restart recovery; async writers retain
+    pending content evidence until completion; top-level read-only roles omit
+    mutation tools; normal Workers are leaves; Smart Worker may launch only
+    depth-one read-only Ged children without bash/edit/write.
+
+- Date: 2026-08-11
+  - Decision: Keep native supervisor coordination and external peer messaging
+    as distinct settings and authority paths.
+  - Why: Spawned-child decisions have an exact native parent route, while
+    independent-session messaging has broader reach and trust implications.
+  - Impact: `contact_supervisor` owns child decisions/progress. Peer messaging
+    defaults off and, when enabled, only sends verified facts/dependency updates
+    to an exact user-directed target; no peer message authorizes scope or edits.

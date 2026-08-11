@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { writeFileAtomic } from "./atomic.js";
 import {
@@ -11,6 +12,7 @@ import {
   normalizeReviewPlanBeforePlannerHandoff,
   REVIEW_PLAN_ID,
 } from "./preferences.js";
+import { GED_AGENT_ALIASES, GED_AGENT_CAPABILITIES } from "./staffing.js";
 import { ensureIgnoredInGitignore } from "./standards.js";
 
 export const GED_AGENT_ROLES = [
@@ -19,11 +21,55 @@ export const GED_AGENT_ROLES = [
   "ged-plan-reviewer",
   "ged-verifier",
   "ged-worker",
+  "ged-smart-worker",
 ] as const;
 
 export type GedAgentRole = (typeof GED_AGENT_ROLES)[number];
 
 export const GED_WORKER_ROLE: GedAgentRole = "ged-worker";
+
+export const GED_AGENT_PROFILES = ["custom", "adaptive"] as const;
+export type GedAgentProfile = (typeof GED_AGENT_PROFILES)[number];
+
+export const ADAPTIVE_PROFILE_REQUIRED_MODELS = [
+  "openai-codex/gpt-5.6-sol",
+  "openai-codex/gpt-5.6-luna",
+] as const;
+
+export const ADAPTIVE_GED_ROLE_MODELS: Readonly<
+  Partial<Record<GedAgentRole, AgentModelConfig>>
+> = {
+  "ged-explorer": {
+    model: "openai-codex/gpt-5.6-sol",
+    thinking: "low",
+    fallback: ["openai-codex/gpt-5.6-luna:low"],
+  },
+  "ged-planner": {
+    model: "openai-codex/gpt-5.6-sol",
+    thinking: "high",
+    fallback: ["openai-codex/gpt-5.6-luna:high"],
+  },
+  "ged-plan-reviewer": {
+    model: "openai-codex/gpt-5.6-sol",
+    thinking: "high",
+    fallback: ["openai-codex/gpt-5.6-luna:max"],
+  },
+  "ged-verifier": {
+    model: "openai-codex/gpt-5.6-sol",
+    thinking: "high",
+    fallback: ["openai-codex/gpt-5.6-luna:max"],
+  },
+  "ged-worker": {
+    model: "openai-codex/gpt-5.6-luna",
+    thinking: "max",
+    fallback: ["openai-codex/gpt-5.6-sol:max"],
+  },
+  "ged-smart-worker": {
+    model: "openai-codex/gpt-5.6-sol",
+    thinking: "high",
+    fallback: ["openai-codex/gpt-5.6-luna:max"],
+  },
+};
 
 export const GED_CRITIQUE_MODES = ["off", "risk-based", "always"] as const;
 export type GedCritiqueMode = (typeof GED_CRITIQUE_MODES)[number];
@@ -38,6 +84,13 @@ const ALLOWED_THINKING_LEVELS = new Set([
   "max",
 ]);
 
+function normalizeThinkingLevel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "maximum") return "max";
+  return ALLOWED_THINKING_LEVELS.has(normalized) ? normalized : undefined;
+}
+
 export function splitFallbackThinkingSuffix(ref: string): {
   model: string;
   thinking?: string;
@@ -45,8 +98,8 @@ export function splitFallbackThinkingSuffix(ref: string): {
   const trimmed = ref.trim();
   const colonIndex = trimmed.lastIndexOf(":");
   if (colonIndex === -1) return { model: trimmed };
-  const suffix = trimmed.slice(colonIndex + 1);
-  if (!ALLOWED_THINKING_LEVELS.has(suffix)) return { model: trimmed };
+  const suffix = normalizeThinkingLevel(trimmed.slice(colonIndex + 1));
+  if (!suffix) return { model: trimmed };
   return { model: trimmed.slice(0, colonIndex), thinking: suffix };
 }
 
@@ -76,6 +129,10 @@ export type GedRoleSettings = {
 
 export interface GedAgentsSettings {
   enabled?: boolean;
+  profile?: GedAgentProfile;
+  supervisorBridge?: boolean;
+  peerMessaging?: boolean;
+  /** Legacy name migrated to supervisorBridge semantics. */
   intercomBridge?: boolean;
   critiqueMode?: GedCritiqueMode;
   defaultModel?: AgentModelConfig;
@@ -98,6 +155,10 @@ export interface SyncGedSubagentRuntimeOptions {
   modelAvailability?: ModelAvailability;
 }
 
+export interface SyncGedSubagentRuntimeResult {
+  diagnostics: string[];
+}
+
 export interface EffectiveGedRoleSettings {
   enabled: boolean;
   model?: AgentModelConfig;
@@ -107,6 +168,10 @@ export interface EffectiveGedRoleSettings {
 
 export interface EffectiveGedAgentsSettings {
   enabled: boolean;
+  profile: GedAgentProfile;
+  supervisorBridge: boolean;
+  peerMessaging: boolean;
+  /** Compatibility projection for existing consumers. */
   intercomBridge: boolean;
   critiqueMode: GedCritiqueMode;
   defaultModel?: AgentModelConfig;
@@ -121,6 +186,7 @@ const DEFAULT_ROLE_ENABLED: Record<GedAgentRole, boolean> = {
   "ged-plan-reviewer": true,
   "ged-verifier": true,
   "ged-worker": false,
+  "ged-smart-worker": false,
 };
 
 export function globalGedSettingsPath(homeDir = os.homedir()): string {
@@ -176,6 +242,12 @@ function parseModelConfig(value: unknown): AgentModelConfig | undefined {
     const model = value.model.trim();
     if (model.length === 0) return undefined;
     const config: Record<string, unknown> = { ...value, model };
+    const thinking = normalizeThinkingLevel(
+      value.thinking ?? value.reasoningEffort,
+    );
+    delete config.reasoningEffort;
+    if (thinking) config.thinking = thinking;
+    else delete config.thinking;
     const fallback = cleanStringArray(value.fallback ?? value.fallbackModels);
     delete config.fallbackModels;
     if (fallback) config.fallback = fallback;
@@ -189,6 +261,13 @@ function parseCritiqueMode(value: unknown): GedCritiqueMode | undefined {
   return typeof value === "string" &&
     GED_CRITIQUE_MODES.includes(value as GedCritiqueMode)
     ? (value as GedCritiqueMode)
+    : undefined;
+}
+
+function parseAgentProfile(value: unknown): GedAgentProfile | undefined {
+  return typeof value === "string" &&
+    GED_AGENT_PROFILES.includes(value as GedAgentProfile)
+    ? (value as GedAgentProfile)
     : undefined;
 }
 
@@ -236,6 +315,14 @@ export function cleanAgentsSettings(value: unknown): GedAgentsSettings {
   const settings: GedAgentsSettings = {};
   if (typeof value.enabled === "boolean") {
     settings.enabled = value.enabled;
+  }
+  const profile = parseAgentProfile(value.profile);
+  if (profile) settings.profile = profile;
+  if (typeof value.supervisorBridge === "boolean") {
+    settings.supervisorBridge = value.supervisorBridge;
+  }
+  if (typeof value.peerMessaging === "boolean") {
+    settings.peerMessaging = value.peerMessaging;
   }
   if (typeof value.intercomBridge === "boolean") {
     settings.intercomBridge = value.intercomBridge;
@@ -298,7 +385,7 @@ async function readJson(filePath: string): Promise<Record<string, unknown>> {
   return {};
 }
 
-async function hasExplicitIntercomBridgeSetting(
+async function hasExplicitSupervisorBridgeSetting(
   rootDir: string,
 ): Promise<boolean> {
   const [globalRaw, projectRaw] = await Promise.all([
@@ -308,6 +395,8 @@ async function hasExplicitIntercomBridgeSetting(
   const globalAgents = isRecord(globalRaw.agents) ? globalRaw.agents : {};
   const projectAgents = isRecord(projectRaw.agents) ? projectRaw.agents : {};
   return (
+    typeof globalAgents.supervisorBridge === "boolean" ||
+    typeof projectAgents.supervisorBridge === "boolean" ||
     typeof globalAgents.intercomBridge === "boolean" ||
     typeof projectAgents.intercomBridge === "boolean"
   );
@@ -325,6 +414,7 @@ function mergeRole(
   globalAgents: GedAgentsSettings,
   projectAgents: GedAgentsSettings,
   enabled: boolean,
+  profile: GedAgentProfile,
 ): EffectiveGedRoleSettings {
   const globalRole = globalAgents.roles?.[role];
   const projectRole = projectAgents.roles?.[role];
@@ -332,18 +422,19 @@ function mergeRole(
     roleModelConfig(projectRole) ??
     projectAgents.models?.[role] ??
     roleModelConfig(globalRole) ??
-    globalAgents.models?.[role];
+    globalAgents.models?.[role] ??
+    (profile === "adaptive" ? ADAPTIVE_GED_ROLE_MODELS[role] : undefined);
+  const profileDefaultEnabled =
+    profile === "adaptive" ? true : DEFAULT_ROLE_ENABLED[role];
   return {
     enabled:
       enabled &&
-      (projectRole?.enabled ??
-        globalRole?.enabled ??
-        DEFAULT_ROLE_ENABLED[role]),
+      (projectRole?.enabled ?? globalRole?.enabled ?? profileDefaultEnabled),
     model,
     maxParallel:
       projectRole?.maxParallel ??
       globalRole?.maxParallel ??
-      (role === "ged-worker" ? 2 : undefined),
+      (role === "ged-worker" ? 2 : role === "ged-smart-worker" ? 1 : undefined),
     preferWorktreeIsolation:
       projectRole?.preferWorktreeIsolation ??
       globalRole?.preferWorktreeIsolation ??
@@ -362,12 +453,14 @@ export async function readEffectiveGedAgentsSettings(
   const globalAgents = globalSettings.agents ?? {};
   const projectAgents = projectSettings.agents ?? {};
   const enabled = projectAgents.enabled ?? globalAgents.enabled ?? false;
+  const profile =
+    projectAgents.profile ?? globalAgents.profile ?? ("custom" as const);
   const defaultModel = projectAgents.defaultModel ?? globalAgents.defaultModel;
 
   const roles = Object.fromEntries(
     GED_AGENT_ROLES.map((role) => [
       role,
-      mergeRole(role, globalAgents, projectAgents, enabled),
+      mergeRole(role, globalAgents, projectAgents, enabled, profile),
     ]),
   ) as Record<GedAgentRole, EffectiveGedRoleSettings>;
   const models = Object.fromEntries(
@@ -379,8 +472,21 @@ export async function readEffectiveGedAgentsSettings(
 
   return {
     enabled,
+    profile,
+    supervisorBridge:
+      projectAgents.supervisorBridge ??
+      projectAgents.intercomBridge ??
+      globalAgents.supervisorBridge ??
+      globalAgents.intercomBridge ??
+      true,
+    peerMessaging:
+      projectAgents.peerMessaging ?? globalAgents.peerMessaging ?? false,
     intercomBridge:
-      projectAgents.intercomBridge ?? globalAgents.intercomBridge ?? true,
+      projectAgents.supervisorBridge ??
+      projectAgents.intercomBridge ??
+      globalAgents.supervisorBridge ??
+      globalAgents.intercomBridge ??
+      true,
     critiqueMode:
       projectAgents.critiqueMode ?? globalAgents.critiqueMode ?? "risk-based",
     defaultModel,
@@ -522,6 +628,7 @@ async function migrateLegacyPreferences(
 
 export function formatGedAgentsStatus(
   effective: EffectiveGedAgentsSettings,
+  availability?: ModelAvailability,
 ): string {
   const modelLines = GED_AGENT_ROLES.map((role) => {
     const roleSettings = effective.roles[role];
@@ -534,22 +641,31 @@ export function formatGedAgentsStatus(
     const enabled = roleSettings.enabled
       ? "enabled"
       : "disabled → main fallback";
-    const workerExtras =
-      role === "ged-worker"
-        ? ` [maxParallel: ${roleSettings.maxParallel ?? 2}, worktree: ${roleSettings.preferWorktreeIsolation ? "preferred" : "optional"}]`
-        : "";
-    return `- ${role}: ${enabled}; ${modelLabel}${thinkingTag}${workerExtras}`;
+    const capabilityId = GED_AGENT_ALIASES[role];
+    const capability = GED_AGENT_CAPABILITIES[capabilityId];
+    const workerExtras = capability.writer
+      ? ` [maxParallel: ${roleSettings.maxParallel ?? capability.maxParallel}, parallel isolation: required]`
+      : "";
+    return `- ${role} (${capabilityId}): ${enabled}; ${modelLabel}${thinkingTag}; ${capability.readOnly ? "read-only" : "writer"}; context ${capability.defaultContext}${capability.mayFanout ? "; fanout depth 1/read-only children" : "; leaf"}${workerExtras}`;
   });
+  const unavailable = unavailableProfileModels(effective, availability);
   return [
     `Subagents: ${effective.enabled ? "enabled" : "disabled"}`,
-    `Intercom bridge: ${effective.intercomBridge ? "enabled" : "disabled"}`,
+    `Profile: ${effective.profile}`,
+    `Supervisor bridge: ${effective.supervisorBridge ? "enabled" : "disabled"}`,
+    `Peer messaging: ${effective.peerMessaging ? "enabled (exact-target verified fact sends only)" : "disabled"}`,
     `Critique mode: ${effective.critiqueMode}`,
     `Default model: ${formatModelConfig(effective.defaultModel)}`,
     "Role models:",
     ...modelLines,
     `Allowed roles: ${GED_AGENT_ROLES.join(", ")}`,
     "Default/builtin pi-subagents agents: disabled/hidden by GedPi runtime sync",
-    "Worker role: optional and disabled by default; main agent owns acceptance and commits",
+    "Writer roles: optional capacity; main agent owns scope, acceptance, patch adjudication, commits, pushes, and lifecycle",
+    ...(unavailable.length > 0
+      ? [
+          `Unavailable profile diagnostic: no configured candidate is live for ${unavailable.join(", ")}. Settings were preserved; no provider was substituted.`,
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -576,6 +692,14 @@ export function selectAgentModel(
   );
 }
 
+export function missingAdaptiveProfileModels(
+  availability: ModelAvailability,
+): string[] {
+  return ADAPTIVE_PROFILE_REQUIRED_MODELS.filter(
+    (model) => !availability.isAvailable(model),
+  );
+}
+
 function fallbackChain(value: AgentModelConfig | undefined): string[] {
   if (!value || typeof value === "string") return [];
   const fb = value.fallback ?? value.fallbackModels;
@@ -590,10 +714,30 @@ function thinkingLevel(
   if (!value || typeof value === "string") return undefined;
   const thinking = value.thinking;
   if (typeof thinking === "string") {
-    const normalized = thinking.trim();
-    if (ALLOWED_THINKING_LEVELS.has(normalized)) return normalized;
+    return normalizeThinkingLevel(thinking);
   }
   return undefined;
+}
+
+export function unavailableProfileModels(
+  effective: EffectiveGedAgentsSettings,
+  availability?: ModelAvailability,
+): string[] {
+  if (!availability) return [];
+  return GED_AGENT_ROLES.flatMap((role) => {
+    if (!effective.roles[role].enabled) return [];
+    const configured = effective.roles[role].model ?? effective.defaultModel;
+    if (
+      configured === undefined ||
+      selectAgentModel(configured, availability) !== undefined
+    ) {
+      return [];
+    }
+    const candidates = modelCandidates(configured).map(
+      modelRefWithoutThinkingSuffix,
+    );
+    return [`${role} [${candidates.join(", ")}]`];
+  });
 }
 
 function formatModelConfig(value: AgentModelConfig | undefined): string {
@@ -619,17 +763,22 @@ function frontmatterModelLines(config: AgentModelConfig | undefined): string {
 function commonFrontmatter(
   role: GedAgentRole,
   effective: EffectiveGedAgentsSettings,
-  options: { worker?: boolean } = {},
 ): string {
   const roleSettings = effective.roles[role];
   const config = roleSettings.model ?? effective.defaultModel;
-  const tools = options.worker
-    ? "read, grep, find, ls, bash, edit, write"
-    : "read, grep, find, ls, bash";
-  const inheritProjectContext = options.worker ? "true" : "false";
-  const completionGuard = options.worker ? "true" : "false";
-  const acceptanceRole = options.worker ? "writer" : "read-only";
-  return `name: ${role}\n${frontmatterModelLines(config)}tools: ${tools}\nsystemPromptMode: replace\ninheritProjectContext: ${inheritProjectContext}\ninheritSkills: false\nacceptanceRole: ${acceptanceRole}\ncompletionGuard: ${completionGuard}\n`;
+  const capability = GED_AGENT_CAPABILITIES[GED_AGENT_ALIASES[role]];
+  const supervisorTool = effective.supervisorBridge
+    ? ", contact_supervisor"
+    : "";
+  const tools = capability.writer
+    ? capability.mayFanout
+      ? `read, grep, find, ls, bash, edit, write, subagent, subagent_wait${supervisorTool}`
+      : `read, grep, find, ls, bash, edit, write${supervisorTool}`
+    : `read, grep, find, ls${supervisorTool}`;
+  const smartWorkerExtensions = capability.mayFanout
+    ? `subagentOnlyExtensions: ${fileURLToPath(import.meta.resolve("pi-subagents"))}, ${fileURLToPath(new URL("../extensions/ged-smart-worker-ceiling/index.ts", import.meta.url))}\n`
+    : "";
+  return `name: ${role}\n${frontmatterModelLines(config)}tools: ${tools}\n${smartWorkerExtensions}systemPromptMode: replace\ninheritProjectContext: ${capability.writer}\ninheritSkills: false\ndefaultContext: ${capability.defaultContext}\nmaxSubagentDepth: ${capability.mayFanout ? 1 : 0}\nacceptanceRole: ${capability.writer ? "writer" : "read-only"}\ncompletionGuard: ${capability.writer}\n`;
 }
 
 function bundledRolePrompt(
@@ -694,18 +843,18 @@ Never edit files, adjudicate acceptance, commit, push, or open PRs. The main age
 `,
     "ged-worker": `---
 description: Optional Ged implementation worker for approved, bounded plan slices.
-${commonFrontmatter(role, effective, { worker: true })}---
+${commonFrontmatter(role, effective)}---
 
 # Ged Worker
 
 You implement only the approved slice assigned by the main Ged agent after its worker-suitability check. Stay inside the task boundaries and report anything that changes scope.
 
-When the dispatch includes a pi-subagents acceptance contract, satisfy the listed criteria, evidence, verification commands, and stop rules, then provide the required structured acceptance report. A typical current contract uses \`acceptance: { level: "verified", criteria: [{ id: "slice", must: "Implement only the assigned slice" }], evidence: ["changed-files", "commands-run", "diff-summary", "residual-risks"], verify: [{ id: "focused", command: "<focused check>", timeoutMs: 120000 }], stopRules: ["Stop if scope expands or product/API judgment is needed"] }\`. Use the separate top-level \`turnBudget: { maxTurns: 8, graceTurns: 2 }\` runtime control when a bounded finalization budget is appropriate.
+When the dispatch includes a pi-subagents acceptance contract, satisfy its current public criteria, evidence, verification commands, and stop rules, then provide the required structured acceptance report. Do not reinterpret child evidence as governance authority.
 
 Allowed when explicitly enabled:
 - Edit source for the assigned slice.
 - Run relevant checks.
-- Ask the supervisor via intercom/contact_supervisor when blocked or when a decision changes product behavior, API shape, data migration, risk, or scope.
+- Ask the supervisor via \`contact_supervisor\` when blocked or when a decision changes product behavior, API shape, data migration, risk, or scope.
 
 Forbidden:
 - Do not commit, push, rebase, merge, resolve broad conflicts, or perform unsafe git operations.
@@ -715,6 +864,20 @@ Forbidden:
 - Do not handle verifier-finding follow-up unless the main agent explicitly dispatches a new isolated mechanical slice with a clear verification path.
 
 Final output must summarize files changed, tests run, remaining risks, and any decisions needed. Worker completion never replaces verifier review or main-agent acceptance.
+`,
+    "ged-smart-worker": `---
+description: Bounded Ged smart implementation worker with depth-one read-only fanout.
+${commonFrontmatter(role, effective)}---
+
+# Ged Smart Worker
+
+You implement one approved difficult but bounded slice as the sole writer for your checkout/worktree. The coordinator owns scope, architecture, product decisions, patch application, evidence adjudication, commits, pushes, and lifecycle.
+
+You may use the \`subagent\` tool only when the coordinator explicitly assigns read-only fanout. Use public \`workflowScript\` with stable lane keys and only these read-only agents: ged-explorer, ged-planner, ged-plan-reviewer, and ged-verifier. The inherited capability ceiling enforces this list, and maxSubagentDepth limits fanout to one level. Never dispatch a worker, Smart Worker, generic writer, or a child that can edit.
+
+Keep your own implementation within the approved slice. Use \`contact_supervisor\` for a required decision or a plan-changing discovery; return routine completion through the normal result. Stop rather than invent product, API, security, migration, architecture, or UX choices.
+
+Do not commit, push, rebase, merge, open PRs, or broaden scope. Final output must name changed files, commands and exit codes, residual risks, nested read-only evidence used, and decisions still needed. Completion never authorizes coordinator governance.
 `,
   };
   return prompts[role];
@@ -749,7 +912,7 @@ async function ensurePiSubagentExtensionConfig(
   const currentBridge = isRecord(existing.intercomBridge)
     ? { ...existing.intercomBridge }
     : {};
-  currentBridge.mode = effective.intercomBridge
+  currentBridge.mode = effective.supervisorBridge
     ? (existingIntercomBridgeMode(currentBridge) ?? "always")
     : "off";
   const next = { ...existing, intercomBridge: currentBridge };
@@ -772,7 +935,7 @@ async function disableLegacyGedBrainSubagent(rootDir: string): Promise<void> {
 export async function syncGedSubagentRuntimeConfig(
   rootDir: string,
   options: SyncGedSubagentRuntimeOptions = {},
-): Promise<void> {
+): Promise<SyncGedSubagentRuntimeResult> {
   const effective = await readEffectiveGedAgentsSettings(rootDir, {
     homeDir: options.homeDir,
   });
@@ -780,7 +943,10 @@ export async function syncGedSubagentRuntimeConfig(
   await ensureIgnoredInGitignore(rootDir, ".gedcode/");
   await ensurePiSubagentSuppression(rootDir);
   await disableLegacyGedBrainSubagent(rootDir);
-  if (effective.enabled && (await hasExplicitIntercomBridgeSetting(rootDir))) {
+  if (
+    effective.enabled &&
+    (await hasExplicitSupervisorBridgeSetting(rootDir))
+  ) {
     await ensurePiSubagentExtensionConfig(effective);
   }
 
@@ -792,7 +958,7 @@ export async function syncGedSubagentRuntimeConfig(
         rm(path.join(agentsDir, `${role}.md`), { force: true }),
       ),
     );
-    return;
+    return { diagnostics: [] };
   }
 
   await mkdir(agentsDir, { recursive: true });
@@ -806,4 +972,16 @@ export async function syncGedSubagentRuntimeConfig(
       await writeFileAtomic(filePath, bundledRolePrompt(role, effective));
     }),
   );
+  const unavailable = unavailableProfileModels(
+    effective,
+    options.modelAvailability,
+  );
+  return {
+    diagnostics:
+      unavailable.length > 0
+        ? [
+            `No configured live model candidate for: ${unavailable.join(", ")}. Profile settings were preserved and no provider was substituted.`,
+          ]
+        : [],
+  };
 }

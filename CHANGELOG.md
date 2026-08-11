@@ -34,6 +34,21 @@
   paths and auto-staging/compound commits are rejected, and milestones require
   proven HEAD advancement to the exact verified index tree. Pending commits are
   durable and recoverable after restart; hook-expanded trees remain blocked.
+- Added adaptive execution staffing independent of governance. GedPi now
+  represents Scout, Worker, Smart Worker, and review capabilities separately
+  from model bindings; recommends solo/assisted/coordinated/high-stakes team
+  shapes; and offers a live-registry-validated GPT-5.6 adaptive profile with
+  Sol/low Scout, Luna/max Worker, and Sol/high Smart Worker defaults.
+- Enforced one current-checkout writer across async runs. Parallel or dynamic
+  writers require managed worktrees, helper/dynamic/aliased launch-script
+  ambiguity fails closed, and a checkout-scoped filesystem lease coordinates
+  independent Pi processes and restart recovery. Async worker changes stay in
+  durable pending mutation state until completion, top-level read-only roles
+  omit bash/edit/write, ordinary Workers are leaves with supervisor access, and
+  Smart Worker nested fanout inherits a depth-one read-only agent/tool ceiling.
+- Split native child-supervisor coordination from opt-in external peer
+  messaging. Peer sends are limited to verified facts/dependency updates for an
+  exact user-directed target and remain non-authorizing.
 
 ### Dependencies
 
@@ -44,6 +59,8 @@
 - Added compatible transitive security overrides for `brace-expansion`,
   `nanoid`, `postcss`, and `undici`, clearing all reported npm audit findings.
 - Added a direct `typebox` dependency for the public Pi custom-tool schema API.
+- Added `acorn` for fail-closed static validation of public workflowScript
+  writer/isolation contracts.
 
 ### Fixes
 

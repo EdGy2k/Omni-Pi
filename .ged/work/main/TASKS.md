@@ -1,28 +1,29 @@
-# Tasks: Content-bound governance (Plan 002)
+# Tasks: Adaptive staffing and model profiles (Plan 003)
 
-## Slice 1 — Canonical repository snapshots
+## Capability and recommendation model
 
-- [x] Add versioned canonical hash/record helpers and Git snapshot contracts.
-- [x] Cover staged, unstaged, untracked, binary, rename, deletion, spaces,
-  worktrees, no-Git, and large-file behavior.
-- [x] Store the opening baseline in authoritative governance state.
+- [x] Define typed role capabilities, legacy aliases, and Smart Worker.
+- [x] Add and table-test the pure adaptive execution-profile recommender.
 
-## Slice 2 — Plan and mutation binding
+## Model profile and settings
 
-- [x] Bind accepted plan evidence to exact SPEC/TASKS/TESTS bytes and paths.
-- [x] Recompute plan binding before planned source mutation.
-- [x] Guard mutation-capable bash/unknown tools with durable pre/post snapshots.
-- [x] Persist observed changed paths and leave no-op/failed-no-change calls clean.
+- [x] Add adaptive GPT-5.6 bindings and canonical maximum-thinking migration.
+- [x] Add separate supervisor-bridge and peer-messaging settings with legacy
+  intercom migration.
+- [x] Add UI/headless profile setup, live registry validation, status, and
+  startup diagnostics.
 
-## Slice 3 — Verification and commit binding
+## Runtime enforcement
 
-- [x] Execute structured verification commands and persist bounded results.
-- [x] Bind verification to the full snapshot, staged digest, and observed scope.
-- [x] Reject drift, unrelated staged paths, auto-staging, and compound commits.
-- [x] Record commit milestones only after proven HEAD/tree advancement.
+- [x] Add one-writer/worktree dispatch validation for public workflowScript
+  launches.
+- [x] Restrict normal worker nesting and Smart Worker fanout through public
+  pi-subagents capability ceilings and depth contracts.
+- [x] Generate and public-preflight Scout/Worker/Smart Worker/verifier agents.
 
-## Slice 4 — Integration, docs, and completion
+## Policy, docs, and completion
 
-- [x] Cover staffing/process-result non-authority and multi-commit behavior.
-- [x] Update prompts, docs, changelog, architecture, and Plan 002 status.
+- [x] Update orchestration prompts for adaptive staffing, native supervisor
+  coordination, narrow peer messaging, stable lane keys, and current APIs.
+- [x] Update README, architecture, decisions, changelog, and Plan 003 status.
 - [x] Run focused/full verification, independent review, and commit.

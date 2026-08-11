@@ -94,7 +94,7 @@ GedPi bundles [Glimpse](https://github.com/HazAT/glimpse) for native micro-UI wi
 | `/update` | Check for GedPi updates |
 | `/grill-me` | Ask one concise question at a time when a genuine user-owned decision is unresolved |
 | `/rtk` | Install RTK and check Ged's automatic bash-side RTK routing (status, install) |
-| `/ged-agents` | Open the interactive subagent setup menu in UI sessions; configure role models, thinking levels, ordered fallbacks, critique mode, intercom, and optional workers. Use `/ged-agents status` for text status. |
+| `/ged-agents` | Configure adaptive/role-specific staffing, models, canonical thinking levels, ordered fallbacks, critique, native supervisor coordination, opt-in peer messaging, and writer capacity. Use `/ged-agents profile adaptive` for the validated GPT-5.6 profile and `/ged-agents status` for diagnostics. |
 | `/ged-settings` | Configure workflow preferences, including accepted-plan review: no extra review, chat approval, or visual approval (Glimpse preferred, browser fallback) |
 
 ### Auto-Updater
@@ -138,18 +138,31 @@ On the first agent turn GedPi also:
 
 ## Execution Staffing
 
-`/ged-agents on|off` changes available capacity, not governance. With staffing
-disabled, the coordinator performs the work directly. With staffing enabled,
-focused assistants may inspect, draft, critique, implement isolated slices, or
-verify. Their results are evidence proposals only: no role name, launch,
-completion, or disabled-role fallback authorizes mutation. The coordinator
-owns scope, decisions, final artifacts, evidence acceptance, commits, pushes,
-and lifecycle.
+`/ged-agents on|off` changes available capacity, not governance. GedPi
+recommends `solo`, `assisted`, `coordinated`, or `high-stakes` staffing from
+decomposability, context spread, difficulty, and budget; the coordinator owns
+the final profile. Scout, planner/reviewer, verifier, Worker, and Smart Worker
+capabilities are distinct from their model bindings. Their results are evidence
+proposals only: no role name, launch, completion, or fallback authorizes
+mutation.
 
-Keep one writer per checkout/worktree. Use isolated worktrees only for
-intentionally parallel writers. Native child-supervisor communication handles
-spawned children; `pi-intercom` remains limited to explicit independent-session
-dependencies.
+`/ged-agents profile adaptive` validates the live registry before saving. Its
+defaults are GPT-5.6 Sol/low for Scout, Luna/max for Worker, and Sol/high for
+Smart Worker, with explicit same-provider fallbacks; existing role overrides
+win. Missing configured chains produce diagnostics without silently switching
+providers or preventing startup. `maximum` and legacy `reasoningEffort` migrate
+to Pi's canonical `max`.
+
+GedPi permits one writer in the current checkout at a time. Parallel writers
+must use pi-subagents managed `worktree: true`; dynamic or aliased workflow
+launches fail closed when isolation cannot be proven. Ordinary Workers are
+leaf agents. Read-only role contracts omit bash/edit/write. Smart Worker has depth-one fanout, and an inherited public
+pi-subagents capability ceiling limits nested children to read-only Ged agents
+and non-mutating tools. Native `contact_supervisor`/`subagent_supervisor`
+handles child decisions and plan-changing discoveries; routine completion uses
+normal results. External `pi-intercom` peer messaging is separately opt-in and
+may only send verified facts/dependency updates to an exact user-directed
+independent-session target.
 
 ### Current guard boundary
 
@@ -162,7 +175,11 @@ pending operations, binds plans and verification to canonical SHA-256
 snapshots, rejects unrelated staged paths, and records commit milestones only
 after HEAD advances to the exact verified index tree. Commit pairing survives
 restart and stable snapshots reject continuously changing repositories.
-External processes outside Pi remain outside this boundary.
+Async current-checkout workers retain a durable checkout-scoped writer lease
+and pending mutation until their exact completion event records pre/post
+content. Independent Pi processes see the same lease; restart recovery only
+reclaims it after pi-subagents status proves the run terminal. External processes
+outside Pi remain outside this boundary.
 
 ## Durable Memory
 

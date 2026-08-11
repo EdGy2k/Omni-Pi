@@ -106,8 +106,9 @@ describe("Ged command surface", () => {
     expect(result).toContain("ged-plan-reviewer");
     expect(result).toContain("ged-verifier");
     expect(result).toContain("ged-worker");
+    expect(result).toContain("ged-smart-worker");
     expect(result).toContain("Default/builtin pi-subagents agents");
-    expect(result).toContain("Worker role: optional");
+    expect(result).toContain("Writer roles: optional capacity");
   });
 
   test("ged-agents project toggles preserve configured models", async () => {
@@ -126,7 +127,9 @@ describe("Ged command surface", () => {
 
     expect(status).toContain("Subagents: enabled");
     expect(status).toContain("Default model: openai/gpt-5-mini");
-    expect(status).toContain("- ged-planner: enabled; openai/gpt-5.5");
+    expect(status).toContain(
+      "- ged-planner (planner): enabled; openai/gpt-5.5",
+    );
   });
 
   test("ged-agents models shows current assignments", async () => {
@@ -169,6 +172,75 @@ describe("Ged command surface", () => {
     expect(result).toContain("openai/gpt-5.5 [thinking: low]");
     expect(result).toContain(
       "default**: openai/gpt-5-mini [thinking: minimal]",
+    );
+  });
+
+  test("ged-agents adaptive profile validates the live registry before saving", async () => {
+    const command = createGedCommands().find(
+      (candidate) => candidate.name === "ged-agents",
+    );
+    const missingRoot = await mkdtemp(
+      path.join(os.tmpdir(), "ged-agents-profile-missing-"),
+    );
+    const missing = await command?.execute({
+      cwd: missingRoot,
+      args: ["profile", "adaptive", "--project"],
+      runtime: {
+        pi: {} as never,
+        ctx: {
+          modelRegistry: { find: () => undefined },
+        } as never,
+      },
+    });
+    expect(missing).toContain(
+      "openai-codex/gpt-5.6-sol, openai-codex/gpt-5.6-luna",
+    );
+    await expect(
+      readGedRuntimeSettings(projectGedSettingsPath(missingRoot)),
+    ).resolves.toEqual({ agents: {} });
+
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ged-agents-profile-live-"),
+    );
+    const result = await command?.execute({
+      cwd: root,
+      args: ["profile", "adaptive", "--project"],
+      runtime: {
+        pi: {} as never,
+        ctx: {
+          modelRegistry: {
+            find: (provider: string, id: string) =>
+              provider === "openai-codex" &&
+              (id === "gpt-5.6-sol" || id === "gpt-5.6-luna")
+                ? { provider, id }
+                : undefined,
+          },
+        } as never,
+      },
+    });
+    expect(result).toContain("adaptive staffing profile saved");
+    await expect(
+      readGedRuntimeSettings(projectGedSettingsPath(root)),
+    ).resolves.toMatchObject({
+      agents: { enabled: true, profile: "adaptive" },
+    });
+    const status = await command?.execute({ cwd: root, args: ["status"] });
+    expect(status).toContain("Profile: adaptive");
+    expect(status).toContain("openai-codex/gpt-5.6-luna [thinking: max]");
+  });
+
+  test("ged-agents keeps external peer messaging separate", async () => {
+    const command = createGedCommands().find(
+      (candidate) => candidate.name === "ged-agents",
+    );
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ged-agents-peer-"));
+    await command?.execute({ cwd, args: ["peer", "on", "--project"] });
+    await expect(
+      readGedRuntimeSettings(projectGedSettingsPath(cwd)),
+    ).resolves.toMatchObject({ agents: { peerMessaging: true } });
+    const status = await command?.execute({ cwd, args: ["status"] });
+    expect(status).toContain(
+      "Peer messaging: enabled (exact-target verified fact sends only)",
     );
   });
 
@@ -289,7 +361,7 @@ describe("Ged command surface", () => {
         projectGedSettingsPath(cwd),
       );
       expect(settings.agents).toMatchObject({
-        intercomBridge: false,
+        supervisorBridge: false,
         critiqueMode: "always",
         roles: {
           "ged-worker": {
@@ -443,7 +515,7 @@ describe("Ged command surface", () => {
     const selectResponses = [
       "This project only",
       "Subagents:",
-      "Intercom bridge:",
+      "Supervisor bridge:",
       "Disabled",
       "ged-worker:",
       "Enable role",
@@ -496,7 +568,7 @@ describe("Ged command surface", () => {
     const settings = await readGedRuntimeSettings(projectGedSettingsPath(cwd));
     expect(settings.agents).toMatchObject({
       enabled: true,
-      intercomBridge: false,
+      supervisorBridge: false,
       roles: {
         "ged-worker": {
           enabled: true,
@@ -800,9 +872,8 @@ describe("Ged command surface", () => {
 
     const result = await command?.execute({ cwd, args: ["setup"] });
 
-    expect(result).toContain("/ged-agents on");
-    expect(result).toContain("ged-explorer");
-    expect(result).toContain("ged-planner");
-    expect(result).toContain("ged-verifier");
+    expect(result).toContain("/ged-agents profile adaptive");
+    expect(result).toContain("openai-codex/gpt-5.6-sol");
+    expect(result).toContain("openai-codex/gpt-5.6-luna");
   });
 });

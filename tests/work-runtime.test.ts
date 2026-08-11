@@ -46,6 +46,7 @@ interface TestTool {
 
 function runtimeHarness(requestIds: string[]) {
   const handlers = new Map<string, Handler[]>();
+  const eventHandlers = new Map<string, Array<(payload: unknown) => unknown>>();
   const tools = new Map<string, TestTool>();
   const api = {
     on(event: string, handler: Handler) {
@@ -53,6 +54,15 @@ function runtimeHarness(requestIds: string[]) {
     },
     registerTool(tool: TestTool) {
       tools.set(tool.name, tool);
+    },
+    events: {
+      on(event: string, handler: (payload: unknown) => unknown) {
+        eventHandlers.set(event, [
+          ...(eventHandlers.get(event) ?? []),
+          handler,
+        ]);
+        return () => {};
+      },
     },
   } as unknown as ExtensionAPI;
 
@@ -86,6 +96,11 @@ function runtimeHarness(requestIds: string[]) {
       const tool = tools.get(name);
       if (!tool) throw new Error(`${name} was not registered`);
       return tool.execute(id, params, undefined, undefined, ctx);
+    },
+    async emitEvent(event: string, payload: unknown) {
+      for (const handler of eventHandlers.get(event) ?? []) {
+        await handler(payload);
+      }
     },
   };
 }
@@ -184,6 +199,269 @@ async function successfulWrite(
 }
 
 describe("Ged governance runtime", () => {
+  it("blocks unisolated parallel writer workflowScript dispatches", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-staffing-guard-"),
+    );
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const blocked = (
+      await runtime.emit(
+        "tool_call",
+        {
+          type: "tool_call",
+          toolCallId: "parallel-writers",
+          toolName: "subagent",
+          input: {
+            workflowScript: `return runs.all([
+              { key: "a", agent: "ged-worker", task: "A" },
+              { key: "b", agent: "ged-smart-worker", task: "B" }
+            ]);`,
+          },
+        },
+        ctx,
+      )
+    )[0];
+    expect(blocked).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("blocks parallel writers"),
+    });
+
+    const isolated = (
+      await runtime.emit(
+        "tool_call",
+        {
+          type: "tool_call",
+          toolCallId: "isolated-writers",
+          toolName: "subagent",
+          input: {
+            worktree: true,
+            workflowScript: `return runs.all([
+              { key: "a", agent: "ged-worker", task: "A" },
+              { key: "b", agent: "ged-worker", task: "B" }
+            ]);`,
+          },
+        },
+        ctx,
+      )
+    )[0];
+    expect(isolated).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("not bound"),
+    });
+  });
+
+  it("holds one current-checkout writer lease through async completion", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-writer-lease-"));
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute("ged_work", directOpen(), ctx);
+    const workId = opened.details?.workId as string;
+    const independent = runtimeHarness(["request-b"]);
+    const independentCtx = context(rootDir, "session-b");
+    await startRequest(independent, independentCtx);
+    await independent.execute(
+      "ged_work",
+      directOpen("Independent work item"),
+      independentCtx,
+    );
+    const writerInput = {
+      workflowScript:
+        'return runs.run("implementation", { agent: "ged-worker", task: "Implement the slice" });',
+    };
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "writer-one",
+            toolName: "subagent",
+            input: writerInput,
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    const asyncDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-writer-async-run-"),
+    );
+    await writeFile(
+      path.join(asyncDir, "status.json"),
+      JSON.stringify({ runId: "writer-run-1", state: "running" }),
+    );
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "writer-one",
+        toolName: "subagent",
+        input: writerInput,
+        content: [],
+        details: { mode: "async", asyncId: "writer-run-1", asyncDir },
+        isError: false,
+      },
+      ctx,
+    );
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "writer-two",
+            toolName: "subagent",
+            input: writerInput,
+          },
+          ctx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("another writer"),
+    });
+
+    expect(
+      (
+        await independent.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "independent-writer",
+            toolName: "subagent",
+            input: writerInput,
+          },
+          independentCtx,
+        )
+      )[0],
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("checkout writer lease"),
+    });
+
+    await mkdir(path.join(rootDir, "src"), { recursive: true });
+    await writeFile(path.join(rootDir, "src", "worker.ts"), "worker\n");
+    await runtime.emitEvent("subagent:async-complete", {
+      runId: "writer-run-1",
+      success: true,
+      state: "complete",
+    });
+    const state = await readGovernanceState(rootDir, workId);
+    expect(state.pendingMutations).toEqual([]);
+    expect(
+      state.evidence.find((entry) => entry.kind === "implementation")?.binding,
+    ).toMatchObject({ changedPaths: ["src/worker.ts"] });
+
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "writer-three",
+            toolName: "subagent",
+            input: writerInput,
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "writer-three",
+        toolName: "subagent",
+        input: writerInput,
+        content: [],
+        details: { mode: "foreground" },
+        isError: false,
+      },
+      ctx,
+    );
+  });
+
+  it("reconciles terminal writer mutation evidence after runtime restart", async () => {
+    const rootDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-writer-restart-"),
+    );
+    await initializeGit(rootDir);
+    const ctx = context(rootDir);
+    const runtime = runtimeHarness(["request-a"]);
+    await startRequest(runtime, ctx);
+    const opened = await runtime.execute("ged_work", directOpen(), ctx);
+    const workId = opened.details?.workId as string;
+    const input = {
+      workflowScript:
+        'return runs.run("implementation", { agent: "ged-worker", task: "Implement" });',
+    };
+    expect(
+      (
+        await runtime.emit(
+          "tool_call",
+          {
+            type: "tool_call",
+            toolCallId: "restart-writer",
+            toolName: "subagent",
+            input,
+          },
+          ctx,
+        )
+      )[0],
+    ).toBeUndefined();
+    const asyncDir = await mkdtemp(
+      path.join(os.tmpdir(), "ged-writer-restart-run-"),
+    );
+    const statusPath = path.join(asyncDir, "status.json");
+    await writeFile(
+      statusPath,
+      JSON.stringify({ runId: "restart-run", state: "running" }),
+    );
+    await runtime.emit(
+      "tool_result",
+      {
+        type: "tool_result",
+        toolCallId: "restart-writer",
+        toolName: "subagent",
+        input,
+        content: [],
+        details: { mode: "async", asyncId: "restart-run", asyncDir },
+        isError: false,
+      },
+      ctx,
+    );
+    await mkdir(path.join(rootDir, "src"), { recursive: true });
+    await writeFile(path.join(rootDir, "src", "restart.ts"), "restart\n");
+    await writeFile(
+      statusPath,
+      JSON.stringify({ runId: "restart-run", state: "complete" }),
+    );
+
+    const restarted = runtimeHarness(["request-b"]);
+    await startRequest(restarted, context(rootDir, "session-b"));
+    const state = await readGovernanceState(rootDir, workId);
+    expect(state.pendingMutations).toEqual([]);
+    expect(
+      state.evidence.find((entry) => entry.kind === "implementation")?.binding,
+    ).toMatchObject({ changedPaths: ["src/restart.ts"] });
+    await expect(
+      readFile(
+        path.join(
+          rootDir,
+          ".ged",
+          "runtime",
+          "checkout-writer-lease",
+          "lease.json",
+        ),
+        "utf8",
+      ),
+    ).rejects.toThrow();
+  });
+
   it("rejects incomplete or unresolved open evidence before request binding", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "ged-work-open-"));
     const ctx = context(rootDir);

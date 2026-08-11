@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createJiti } from "jiti";
 import { describe, expect, test } from "vitest";
+import gedSmartWorkerCeiling from "../extensions/ged-smart-worker-ceiling/index.js";
 import packageJson from "../package.json" with { type: "json" };
 import packageLock from "../package-lock.json" with { type: "json" };
 import { activeGedPaths } from "../src/ged-paths.js";
@@ -111,6 +112,51 @@ describe("Ged runtime flow", () => {
       "pi-subagents",
     );
     expect(typeof subagentsModule.default).toBe("function");
+  });
+
+  test("Smart Worker extension registers a read-only child capability ceiling", async () => {
+    const handlers = new Map<string, (...args: never[]) => unknown>();
+    await gedSmartWorkerCeiling({
+      on(event: string, handler: (...args: never[]) => unknown) {
+        handlers.set(event, handler);
+      },
+    } as never);
+    const sessionId = `smart-worker-${Date.now()}`;
+    handlers.get("session_start")?.(
+      {} as never,
+      {
+        sessionManager: { getSessionId: () => sessionId },
+      } as never,
+    );
+    const moduleId = "pi-subagents/capability-ceiling";
+    const capabilityApi = await createJiti(import.meta.url).import<{
+      resolveSubagentCapabilityCeiling(id: string): {
+        allowedAgents?: string[];
+        allowedTools?: string[];
+      };
+    }>(moduleId);
+    expect(
+      capabilityApi.resolveSubagentCapabilityCeiling(sessionId).allowedAgents,
+    ).toEqual([
+      "ged-explorer",
+      "ged-plan-reviewer",
+      "ged-planner",
+      "ged-verifier",
+    ]);
+    expect(
+      capabilityApi.resolveSubagentCapabilityCeiling(sessionId).allowedTools,
+    ).toEqual([
+      "contact_supervisor",
+      "find",
+      "grep",
+      "ls",
+      "read",
+      "structured_output",
+    ]);
+    handlers.get("session_shutdown")?.({} as never, {} as never);
+    expect(
+      capabilityApi.resolveSubagentCapabilityCeiling(sessionId),
+    ).toBeUndefined();
   });
 
   test("prepareNextTaskDispatch creates a task brief and marks the task in progress", async () => {

@@ -1,8 +1,7 @@
 # Governance-First Adaptive Orchestration
 
-Status: approved target; governance and content-bound enforcement are
-implemented through Plan 002. Adaptive staffing remains follow-up work in Plan
-003.
+Status: implemented through Plan 003: governance/content evidence and adaptive
+staffing are enforced as separate planes.
 
 ## Purpose
 
@@ -138,23 +137,72 @@ captures, and large files use streaming full-content hashes.
 
 ## Execution staffing plane
 
-Staffing is capacity, not governance. Plan 003 will select among:
+Staffing is capacity, not governance. The pure recommendation selector uses:
+
+```text
+team shape = f(decomposability, context spread, difficulty, budget)
+```
+
+The coordinator owns the final choice among:
 
 - **solo**: coordinator executes directly;
 - **assisted**: one focused scout, reviewer, or verifier;
 - **coordinated**: several disjoint evidence producers and/or isolated workers;
 - **high-stakes**: stronger independent review and stricter acceptance.
 
-Signals include decomposability, context spread, difficulty, uncertainty,
-parallelism value, review value, and budget. Staffing can escalate or shrink
-without changing work mode. A planned-change can remain solo; a read-only
-request can use several scouts.
+High-stakes difficulty takes deeper fresh review; low budget prefers solo;
+disjoint work can become coordinated; broad, bounded, or difficult work can be
+assisted. Staffing can escalate or shrink without changing work mode. A
+planned-change can remain solo; a read-only request can use several scouts.
 
-Optional assistants may inspect, draft, critique, implement bounded isolated
-slices, or verify. The coordinator validates their outputs and records accepted
-evidence. Native child-supervisor messaging handles parent/child coordination.
-`pi-intercom` is reserved for explicit dependencies between independent
-sessions, not routine completion handoffs.
+Capabilities are typed separately from model bindings. Legacy role aliases map
+to Scout, planner, plan-reviewer, verifier, Worker, and Smart Worker. Scout and
+review roles are fresh read-only leaves. Worker is a fork-capable writer leaf.
+Smart Worker is a fork-capable writer with only explicitly assigned depth-one
+read-only fanout.
+
+The adaptive binding validates exact live registry IDs before saving:
+
+| Capability | Primary | Thinking | Fallback |
+|---|---|---|---|
+| Scout | `openai-codex/gpt-5.6-sol` | `low` | Luna/low |
+| Worker | `openai-codex/gpt-5.6-luna` | `max` | Sol/max |
+| Smart Worker | `openai-codex/gpt-5.6-sol` | `high` | Luna/max |
+| Planner/reviewer/verifier defaults | Sol | high | Luna/high or max |
+
+Explicit user role bindings remain higher precedence. Missing active candidate
+chains are diagnosed without startup failure or silent provider substitution.
+User-facing `maximum` and legacy `reasoningEffort` normalize to `max`.
+
+GedPi statically validates the public pi-subagents `workflowScript` shape.
+Direct `runs.run`/`runs.all` launches must be returned or awaited. Parallel
+readers are permitted. More than one possible writer requires managed
+`worktree: true` on every writer lane or at workflow level. Dynamic parallel
+lanes require workflow-level isolation; aliases, duplicate isolation fields,
+and spread-based ambiguity fail closed. A current-checkout async writer holds a
+checkout-scoped filesystem lease and durable pending mutation until its exact
+completion event captures pre/post content. Independent processes contend on
+the same atomic lease directory. After restart, an active lease is reclaimed
+only when its exact pi-subagents `status.json` is terminal; missing, corrupt,
+launching, or paused state remains fail-closed. Managed worktree writers return handoff
+artifacts for coordinator adjudication.
+
+Ordinary Worker contracts expose no subagent tool and set recursion depth zero.
+Top-level read-only contracts omit bash/edit/write and include only native
+inspection plus supervisor coordination tools.
+Smart Worker exposes the current public subagent runtime at depth one. Its
+child-only extension registers a public inherited capability ceiling allowing
+only the four read-only Ged agent names and read/grep/find/ls plus internal
+supervisor/structured-output tools; nested bash/edit/write and writer agents are
+removed or rejected before launch.
+
+Native `contact_supervisor`/`subagent_supervisor` is used for required child
+decisions, structured input, and plan-changing discoveries. Routine completion
+returns through subagent results. External `pi-intercom` peer messaging is a
+separate setting, disabled by default. When explicitly enabled, it only sends
+verified facts or dependency updates to an exact user-directed target; peers
+never ask each other for decisions, direct edits, change scope, or turn inbound
+messages into authority.
 
 ## Durable memory
 

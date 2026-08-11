@@ -4,6 +4,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, SettingsList } from "@earendil-works/pi-tui";
 import {
+  ADAPTIVE_PROFILE_REQUIRED_MODELS,
   type AgentModelConfig,
   formatFallbackModelRef,
   formatGedAgentsStatus,
@@ -13,6 +14,7 @@ import {
   type GedAgentsSettings,
   globalGedSettingsPath,
   type ModelAvailability,
+  missingAdaptiveProfileModels,
   modelRefWithoutThinkingSuffix,
   projectGedSettingsPath,
   readEffectiveGedAgentsSettings,
@@ -29,12 +31,6 @@ import {
   PREFERENCE_DEFINITIONS,
 } from "./preferences.js";
 import { executeRtkCommand } from "./rtk.js";
-
-// ─── Curated defaults for non-UI fallback ──────────────────────────────
-
-const DEFAULT_EXPLORER = "deepseek/deepseek-v4-flash";
-const DEFAULT_PLANNER = "openai/gpt-5.5";
-const DEFAULT_VERIFIER = "anthropic/claude-opus-4.7";
 
 const THINKING_LEVELS = [
   "off",
@@ -180,7 +176,9 @@ function roleSummary(settings: GedAgentsSettings, role: GedAgentRole): string {
   const status =
     enabled === false
       ? "disabled"
-      : enabled === true || role !== "ged-worker"
+      : enabled === true ||
+          settings.profile === "adaptive" ||
+          (role !== "ged-worker" && role !== "ged-smart-worker")
         ? "enabled"
         : "disabled";
   const config = configuredRoleModel(settings, role);
@@ -274,13 +272,11 @@ function formatCompactSetup(): string {
     "## Quick setup (copy & run)",
     "",
     "```",
-    "/ged-agents on --project",
-    `/ged-agents model ged-explorer ${DEFAULT_EXPLORER} --project`,
-    `/ged-agents model ged-planner ${DEFAULT_PLANNER} --project`,
-    `/ged-agents model ged-verifier ${DEFAULT_VERIFIER} --project`,
+    "/ged-agents profile adaptive --project",
     "```",
     "",
-    "Or run `/ged-agents setup` in an interactive Pi session for a searchable model picker.",
+    `Requires live registry models: ${ADAPTIVE_PROFILE_REQUIRED_MODELS.join(", ")}.`,
+    "Or run `/ged-agents setup` in an interactive Pi session for profile or role-specific setup.",
   ].join("\n");
 }
 
@@ -440,8 +436,10 @@ async function runInteractiveAdvancedSetup(
   while (true) {
     const choice = await ui.select("Ged agent orchestration setup", [
       `Subagents: ${next.enabled ? "enabled" : "disabled"}`,
+      `Profile: ${next.profile ?? "custom"}`,
       `${defaultSummary(next)}`,
-      `Intercom bridge: ${next.intercomBridge === false ? "disabled" : "enabled"}`,
+      `Supervisor bridge: ${(next.supervisorBridge ?? next.intercomBridge) === false ? "disabled" : "enabled"}`,
+      `Peer messaging: ${next.peerMessaging === true ? "enabled" : "disabled"}`,
       `Critique mode: ${next.critiqueMode ?? "risk-based"}`,
       ...GED_AGENT_ROLES.map((role) => roleSummary(next, role)),
       "Done",
@@ -451,6 +449,26 @@ async function runInteractiveAdvancedSetup(
     if (choice === "Done") break;
     if (choice.startsWith("Subagents:")) {
       next.enabled = !next.enabled;
+      dirty = true;
+      continue;
+    }
+    if (choice.startsWith("Profile:")) {
+      const profile = await ui.select("Execution staffing profile", [
+        "adaptive",
+        "custom",
+        "Back",
+      ]);
+      if (!profile || profile === "Back") continue;
+      if (profile === "adaptive") {
+        const missing = missingAdaptiveProfileModels(
+          modelAvailabilityFromRegistry(registry) as ModelAvailability,
+        );
+        if (missing.length > 0) {
+          return `Adaptive profile not saved. Missing live model IDs: ${missing.join(", ")}. Refresh/login, then retry; GedPi did not switch providers.`;
+        }
+        next.enabled = true;
+      }
+      next.profile = profile as "adaptive" | "custom";
       dirty = true;
       continue;
     }
@@ -489,15 +507,26 @@ async function runInteractiveAdvancedSetup(
       }
       continue;
     }
-    if (choice.startsWith("Intercom bridge:")) {
-      const bridge = await ui.select("Intercom bridge", [
+    if (choice.startsWith("Supervisor bridge:")) {
+      const bridge = await ui.select("Native supervisor bridge", [
         "Enabled",
         "Disabled",
         "Back",
       ]);
-      if (bridge === "Enabled") next.intercomBridge = true;
-      if (bridge === "Disabled") next.intercomBridge = false;
+      if (bridge === "Enabled") next.supervisorBridge = true;
+      if (bridge === "Disabled") next.supervisorBridge = false;
       if (bridge === "Enabled" || bridge === "Disabled") dirty = true;
+      continue;
+    }
+    if (choice.startsWith("Peer messaging:")) {
+      const peer = await ui.select("External peer messaging", [
+        "Enabled",
+        "Disabled",
+        "Back",
+      ]);
+      if (peer === "Enabled") next.peerMessaging = true;
+      if (peer === "Disabled") next.peerMessaging = false;
+      if (peer === "Enabled" || peer === "Disabled") dirty = true;
       continue;
     }
     if (choice.startsWith("Critique mode:")) {
@@ -618,7 +647,10 @@ async function executeGedAgentsCommand(
   }
 
   if (action === "status") {
-    return formatGedAgentsStatus(await readEffectiveGedAgentsSettings(cwd));
+    return formatGedAgentsStatus(
+      await readEffectiveGedAgentsSettings(cwd),
+      modelAvailabilityFromRegistry(ctx?.runtime?.ctx.modelRegistry),
+    );
   }
 
   if (action === "models") {
@@ -630,6 +662,37 @@ async function executeGedAgentsCommand(
       return await runInteractiveAdvancedSetup(ctx);
     }
     return formatCompactSetup();
+  }
+
+  if (action === "profile") {
+    const { targetPath, scopeLabel, remaining } = resolveScope(rest);
+    const [profile] = remaining;
+    if (profile !== "adaptive" && profile !== "custom") {
+      return "Usage: /ged-agents profile <adaptive|custom> [--project|--global]";
+    }
+    const availability = modelAvailabilityFromRegistry(
+      ctx?.runtime?.ctx.modelRegistry,
+    );
+    if (profile === "adaptive") {
+      if (!availability) {
+        return "Adaptive profile not saved: a live Pi model registry is required in this session.";
+      }
+      const missing = missingAdaptiveProfileModels(availability);
+      if (missing.length > 0) {
+        return `Adaptive profile not saved. Missing live model IDs: ${missing.join(", ")}. Refresh/login, then retry; GedPi did not switch providers.`;
+      }
+    }
+    const filePath = resolveTargetPath(cwd, targetPath);
+    const existing = await readGedRuntimeSettings(filePath);
+    await writeGedAgentsSettings(filePath, {
+      ...(existing.agents ?? {}),
+      enabled: profile === "adaptive" ? true : existing.agents?.enabled,
+      profile,
+    });
+    await syncGedSubagentRuntimeConfig(cwd, {
+      modelAvailability: availability,
+    });
+    return `Ged ${profile} staffing profile saved in ${scopeLabel} settings.`;
   }
 
   if (action === "on" || action === "off") {
@@ -720,14 +783,29 @@ async function executeGedAgentsCommand(
     const existing = await readGedRuntimeSettings(filePath);
     await writeGedAgentsSettings(filePath, {
       ...(existing.agents ?? {}),
-      intercomBridge: value === "on",
+      supervisorBridge: value === "on",
     });
     await syncGedSubagentRuntimeConfig(cwd, {
       modelAvailability: modelAvailabilityFromRegistry(
         ctx?.runtime?.ctx.modelRegistry,
       ),
     });
-    return `Ged intercom bridge ${value === "on" ? "enabled" : "disabled"}.`;
+    return `Ged native supervisor bridge ${value === "on" ? "enabled" : "disabled"}.`;
+  }
+
+  if (action === "peer") {
+    const { targetPath, remaining } = resolveScope(rest);
+    const [value] = remaining;
+    if (value !== "on" && value !== "off") {
+      return "Usage: /ged-agents peer <on|off> [--project|--global]";
+    }
+    const filePath = resolveTargetPath(cwd, targetPath);
+    const existing = await readGedRuntimeSettings(filePath);
+    await writeGedAgentsSettings(filePath, {
+      ...(existing.agents ?? {}),
+      peerMessaging: value === "on",
+    });
+    return `Ged external peer messaging ${value === "on" ? "enabled" : "disabled"}.`;
   }
 
   if (action === "critique") {
@@ -747,7 +825,8 @@ async function executeGedAgentsCommand(
 
   if (action === "thinking") {
     const { targetPath, remaining } = resolveScope(rest);
-    const [role, value] = remaining;
+    const [role, rawValue] = remaining;
+    const value = rawValue === "maximum" ? "max" : rawValue;
     if (!role || !value) {
       return `Usage: /ged-agents thinking <role> <${THINKING_LEVELS.join("|")}|inherit> [--project|--global]`;
     }
@@ -966,7 +1045,7 @@ async function executeGedAgentsCommand(
     return `Updated ged-worker ${setting}.`;
   }
 
-  return "Usage: /ged-agents [status|models|setup|on|off|model|role|thinking|fallback|intercom|critique|worker] [--project|--global]";
+  return "Usage: /ged-agents [status|models|setup|profile|on|off|model|role|thinking|fallback|intercom|peer|critique|worker] [--project|--global]";
 }
 
 async function executeGedSettingsCommand(
